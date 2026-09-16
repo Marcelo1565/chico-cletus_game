@@ -15,6 +15,7 @@ let handDirty=true;
 let autoWaveTimer=null, awStartTime=0;
 const AW_DELAY = 4000;
 let totalKills=0, score=0, gameStarted=false;
+let difficulty='normal'; // 'easy' | 'normal' | 'hard'
 let gameSpeed=1, paused=false;
 let comboCount=0, comboTimer=null;
 let lastTime=0, regenAcc=0, targetUpdateTimer=0;
@@ -88,6 +89,7 @@ const PASSIVES = {
   sticky:   { tag:'🟤 Rastro auto',  desc:'Cria gosma a cada ataque' },
   healer:   { tag:'💚 Cura aura',    desc:'Cura aliados a cada ciclo' },
   lenda:    { tag:'👑 Lendário',     desc:'Ignora sinergias (já é top)' },
+  mascador: { tag:'💚 Aura de regen',  desc:'Regenera HP das tropas vizinhas' },
 };
 function hasTaunt() { return units.some(u=>u&&u.id==='tanque'); }
 
@@ -121,7 +123,8 @@ document.getElementById('hs-val').textContent = getHS();
 (function() {
   const hs = getHS();
   const el = document.getElementById('title-hs');
-  if (el) el.textContent = hs > 0 ? '🏆 Recorde: Wave '+hs : '';
+  const hsScore = parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
+  if (el) el.textContent = hs > 0 ? '🏆 Wave '+hs+(hsScore>0?' · '+hsScore.toLocaleString('pt-BR')+' pts':'') : '';
 })();
 
 // ═══════════════════════════════════════════
@@ -166,6 +169,7 @@ document.addEventListener('keydown', e => {
 // ═══════════════════════════════════════════
 function registerKill() {
   totalKills++;
+  checkAchievements();
   score += wave * 10 * (comboCount >= 3 ? 2 : 1);
   const sel = document.getElementById('hv-score'); if(sel) sel.innerText = score;
   comboCount++;
@@ -191,7 +195,7 @@ const DECK = [
   {id:'mascador', name:'Mascador',      icon:'./chicleteMascador.png', emoji:null,  desc:'Soldado fiel do Rei',           cost:2, type:'unit',     hp:75,  dmg:14, spd:46, color:'#ff88bb', rarity:'common',  weight:9},
   {id:'acido',    name:'Chicle Ácido',  icon:'./chicleteAcido.png',   emoji:'🍋',  desc:'Rápido, pouca resistência',     cost:2, type:'unit',     hp:40,  dmg:11, spd:22, color:'#aadd22', rarity:'common',  weight:9},
   {id:'tanque',   name:'Blocão',        icon:'./chicleteTanque.png',  emoji:null,  desc:'Parede viva de chiclete',       cost:4, type:'unit',     hp:500, dmg:12, spd:60, color:'#ff44aa', rarity:'rare',    weight:7},
-  {id:'atirador', name:'Franqueiro',    icon:null,                            emoji:'🎯',  desc:'Alto dano, vida baixa',         cost:3, type:'unit',     hp:52,  dmg:32, spd:75, color:'#cc8844', rarity:'rare',    weight:6},
+  {id:'atirador', name:'Franqueiro',    icon:'./Franqueiro.png',              emoji:'🎯',  desc:'Alto dano, vida baixa',         cost:3, type:'unit',     hp:52,  dmg:32, spd:75, color:'#cc8844', rarity:'rare',    weight:6},
   {id:'duplo',    name:'Par de Goma',   icon:null,                            emoji:'🍡',  desc:'Equilibrado e barato',          cost:2, type:'unit',     hp:60,  dmg:13, spd:44, color:'#ff66cc', rarity:'common',  weight:9},
   {id:'lenda',    name:'Rei da Bala',   icon:null,                            emoji:'🍮',  desc:'Lendário. Ponto final.',        cost:4, type:'unit',     hp:250, dmg:42, spd:60, color:'#ffd700', rarity:'legend',  weight:2},
   {id:'sticky',   name:'Goma Grudenta', icon:null,                            emoji:'🟤',  desc:'Gosma que lentifica inimigos',  cost:5, type:'unit',     hp:78,  dmg:16, spd:80, color:'#aa6633', rarity:'rare',    weight:5},
@@ -465,17 +469,17 @@ function createEnemyEl(e) {
   e.sz=sz;
   const body=document.createElement('div'); body.className='enemy-body '+e.type;
   body.style.width=sz+'px'; body.style.height=sz+'px'; body.style.fontSize=(sz*.48)+'px';
-  body.innerText=e.type==='boss'?'👹':e.type==='tank'?'🛡️':e.type==='fast'?'💨':e.type==='healer'?'💊':e.type==='runner'?'🏃':'💀';
+  body.innerText=e.type==='boss'?'👹':e.type==='tank'?'🛡️':e.type==='fast'?'💨':e.type==='healer'?'💊':e.type==='runner'?'🏃':e.type==='armored'?'🪖':'💀';
   if (e.type!=='normal') {
     const badge=document.createElement('div'); badge.className='enemy-badge';
-    const colors={boss:'#6600ff',tank:'#ff6600',fast:'#00cc66',healer:'#009944',runner:'#cc00aa'};
+    const colors={boss:'#6600ff',tank:'#ff6600',fast:'#00cc66',healer:'#009944',runner:'#cc00aa',armored:'#4488ff'};
     badge.style.background=colors[e.type]||'#880022'; badge.style.color='#fff';
-    badge.innerText=e.type==='boss'?'BOSS':e.type==='tank'?'TANK':e.type==='fast'?'FAST':e.type==='runner'?'RUNNER':'CURADOR';
+    badge.innerText=e.type==='boss'?'BOSS':e.type==='tank'?'TANK':e.type==='fast'?'FAST':e.type==='runner'?'RUNNER':e.type==='armored'?'ARMADO':'CURADOR';
     wrap.appendChild(badge);
   }
   const hpBg=document.createElement('div'); hpBg.className='enemy-hp-bg'; hpBg.style.width=sz+'px';
   const hpBar=document.createElement('div');
-  hpBar.className='enemy-hp '+(e.type==='boss'?'boss-hp':e.type==='healer'?'healer-hp':'normal-hp');
+  hpBar.className='enemy-hp '+(e.type==='boss'?'boss-hp':e.type==='healer'?'healer-hp':e.type==='armored'?'armored-hp':'normal-hp');
   hpBar.style.width='100%';
   hpBg.appendChild(hpBar); wrap.appendChild(body); wrap.appendChild(hpBg);
   if (e.type==='boss') {
@@ -591,9 +595,15 @@ function buildSpawn() {
   const BASE_INIMIGOS=3, MULTI_LINEAR=1.8, MULTI_QUAD=0.25;
   let count = Math.round(BASE_INIMIGOS + wave*MULTI_LINEAR + wave*wave*MULTI_QUAD);
 
+
+// Multiplicadores de dificuldade
+const DIFF = { easy:{hp:.6,dmg:.6,spd:.75,count:.7}, normal:{hp:1,dmg:1,spd:1,count:1}, hard:{hp:1.4,dmg:1.4,spd:1.25,count:1.35} };
+const dm = DIFF[difficulty]||DIFF.normal;
+
   const isDoubleHorde = wave%7===0 && wave>1;
   const isAllFast     = wave%6===0 && wave>1;
   const forceHealer   = wave%4===0 && wave>3;
+  count = Math.round(count * dm.count);
   if (isDoubleHorde) count = Math.round(count*2);
 
   totalWave=count; spawnQueue=[]; spawnClock=0;
@@ -605,19 +615,21 @@ function buildSpawn() {
     const isBoss   = wave%5===0 && i===0;
     const isHealer = forceHealer && i===1 && !isBoss;
     // Corredor: aparece a partir da wave 6, 12% de chance — ignora tropas, vai direto no Rei
-    const isRunner = !isBoss && !isHealer && r>0.55 && r<=0.67 && wave>=6;
-    const isTank   = !isBoss && !isHealer && !isRunner && r<0.22 && wave>1 && !isAllFast;
-    const isFast   = !isBoss && !isHealer && !isRunner && !isTank && (isAllFast||(r>0.72&&wave>=3));
+    const isRunner  = !isBoss && !isHealer && r>0.55 && r<=0.67 && wave>=6;
+    // Armado: wave 8+, 10% chance — 1 hit quebra escudo, depois morre normal
+    const isArmored = !isBoss && !isHealer && !isRunner && r>0.45 && r<=0.55 && wave>=8;
+    const isTank   = !isBoss && !isHealer && !isRunner && !isArmored && r<0.22 && wave>1 && !isAllFast;
+    const isFast   = !isBoss && !isHealer && !isRunner && !isArmored && !isTank && (isAllFast||(r>0.72&&wave>=3));
 
     // HP BASE — wave 1=100hp | wave 5=220hp | wave 10=440hp
     // Para FÁCIL → HP_BASE=55, HP_POR_WAVE=10, HP_QUAD=0.5
     const HP_BASE=100, HP_POR_WAVE=18, HP_QUAD=1.5;
-    const baseHp = HP_BASE + wave*HP_POR_WAVE + wave*wave*HP_QUAD;
+    const baseHp = (HP_BASE + wave*HP_POR_WAVE + wave*wave*HP_QUAD) * dm.hp;
 
     // DANO BASE
     // Para FÁCIL → DMG_BASE_NORMAL=4, DMG_POR_WAVE=0.5
-    const DMG_BASE_NORMAL=6, DMG_BASE_TANK=12, DMG_BASE_FAST=5, DMG_BASE_HEALER=2, DMG_BASE_RUNNER=8, DMG_POR_WAVE=0.9;
-    const dmgBase = (isTank?DMG_BASE_TANK:isFast?DMG_BASE_FAST:isHealer?DMG_BASE_HEALER:isRunner?DMG_BASE_RUNNER:DMG_BASE_NORMAL)
+    const DMG_BASE_NORMAL=6, DMG_BASE_TANK=12, DMG_BASE_FAST=5, DMG_BASE_HEALER=2, DMG_BASE_RUNNER=8, DMG_BASE_ARMORED=7, DMG_POR_WAVE=0.9;
+    const dmgBase = ((isTank?DMG_BASE_TANK:isFast?DMG_BASE_FAST:isHealer?DMG_BASE_HEALER:isRunner?DMG_BASE_RUNNER:isArmored?DMG_BASE_ARMORED:DMG_BASE_NORMAL)*dm.dmg|0)
                     + Math.floor(wave*DMG_POR_WAVE);
 
     const HP_TANK_MULT=3.0, HP_BOSS_MULT=7.0;
@@ -626,7 +638,7 @@ function buildSpawn() {
     // VELOCIDADE — acima de 3.0 fica difícil de ver
     // Para FÁCIL → SPD_NORMAL=0.7, SPD_POR_WAVE=0.018
     const SPD_NORMAL=1.1, SPD_POR_WAVE=0.038, SPD_FAST_BASE=2.1, SPD_FAST_WAVE=0.055, SPD_TANK=0.5, SPD_BOSS=0.6, SPD_HEALER=0.75;
-    const speed = isBoss?SPD_BOSS : isTank?SPD_TANK : isFast?(SPD_FAST_BASE+wave*SPD_FAST_WAVE) : isHealer?SPD_HEALER : isRunner?(1.4+wave*0.04) : (SPD_NORMAL+wave*SPD_POR_WAVE);
+    const speed = (isBoss?SPD_BOSS : isTank?SPD_TANK : isFast?(SPD_FAST_BASE+wave*SPD_FAST_WAVE) : isHealer?SPD_HEALER : isRunner?(1.4+wave*0.04) : isArmored?(SPD_NORMAL*0.9+wave*SPD_POR_WAVE) : (SPD_NORMAL+wave*SPD_POR_WAVE)) * dm.spd;
 
     // INTERVALO — FÁCIL→350ms | MÉDIO→280ms | DIFÍCIL→180ms
     const SPAWN_INTERVALO = 180;
@@ -639,7 +651,8 @@ function buildSpawn() {
       dmg:     isBoss?Math.round(dmgBase*2.0):dmgBase,
       healPower: isHealer?Math.round(8+wave*0.8):0,
       attackCd: 0,
-      type:    isBoss?'boss':isTank?'tank':isFast?'fast':isHealer?'healer':isRunner?'runner':'normal',
+      type:    isBoss?'boss':isTank?'tank':isFast?'fast':isHealer?'healer':isRunner?'runner':isArmored?'armored':'normal',
+      shielded: isArmored,
       rageMode: false,
     });
   }
@@ -649,7 +662,7 @@ function buildSpawn() {
 //  UPGRADES PÓS-WAVE
 // ═══════════════════════════════════════════
 function showUpgrades() {
-  sfxWin();
+  checkAchievements(); sfxWin();
   const pb=document.getElementById('btn-pause'); if(pb) pb.disabled=true;
   const pool = [
     {icon:'⚔️',title:'Goma Afiada',      desc:'+8 dano para todas as tropas',      fn:()=>upgrades.dmg+=8},
@@ -737,7 +750,7 @@ function loop(ts) {
       if (!q.spawned && spawnClock>=q.delay) {
         q.spawned=true;
         const e={x:q.x,y:q.y,hp:q.hp,maxHp:q.maxHp,speed:q.speed,dmg:q.dmg,
-          healPower:q.healPower||0,healCd:0,attackCd:0,type:q.type,rageMode:false};
+          healPower:q.healPower||0,healCd:0,attackCd:0,type:q.type,rageMode:false,shielded:q.shielded||false};
         createEnemyEl(e); enemies.push(e);
       }
     });
@@ -776,6 +789,26 @@ function loop(ts) {
               if (hpEl){const pct=ally.hp/ally.maxHp;hpEl.style.width=pct*100+'%';hpEl.style.background=pct>.5?'#44cc88':pct>.25?'#ffcc00':'#ff2244';}
             }
           });
+          u.cd=Math.max(180,u.spd*16-upgrades.spd*12);
+        } else if (u.id==='mascador') {
+          // Passiva: regen +3 HP nas tropas vizinhas (célula adjacente)
+          const adjacents=[-1,1,-COLS,COLS,-COLS-1,-COLS+1,COLS-1,COLS+1];
+          const myIdx=u.row*COLS+u.col;
+          adjacents.forEach(delta=>{
+            const ni=myIdx+delta; if(ni<0||ni>=25) return;
+            const ally=units[ni]; if(!ally||ally===u||ally.hp>=ally.maxHp) return;
+            const h=Math.min(3,ally.maxHp-ally.hp); ally.hp+=h;
+            const acc=cellCenter(ally.col,ally.row);
+            spawnFloat(acc.x,acc.y-14,'+'+h,'#aaffcc');
+            const hpEl=getCellEl(ni).querySelector('.hp-bar');
+            if(hpEl){const pct=ally.hp/ally.maxHp;hpEl.style.width=pct*100+'%';hpEl.style.background=pct>.5?'#44cc88':pct>.25?'#ffcc00':'#ff2244';}
+          });
+          const t=nearestEnemy(cellCenter(u.col,u.row).x,cellCenter(u.col,u.row).y);
+          if(t){
+            const dmg=u.dmg+upgrades.dmg+syn;
+            const p={x:cellCenter(u.col,u.row).x,y:cellCenter(u.col,u.row).y,tgt:t,dmg,color:u.color,spd:5,r:3};
+            createProjEl(p); projs.push(p);
+          }
           u.cd=Math.max(180,u.spd*16-upgrades.spd*12);
         } else {
           const t=nearestEnemy(cc.x,cc.y);
@@ -862,16 +895,27 @@ function loop(ts) {
           cel.textContent='★ CRÍTICO! '+p.dmg;
           arena.appendChild(cel); setTimeout(()=>cel.remove(),700);
         }
+        // Armored: primeiro hit quebra escudo
+        if (p.tgt.shielded) {
+          p.tgt.shielded = false;
+          p.tgt.hp = p.tgt.maxHp; // restaura HP — escudo foi o hit
+          p.tgt.bodyEl.style.opacity = '0.7';
+          p.tgt.bodyEl.innerText = '💀'; // virou normal
+          p.tgt.bodyEl.className = 'enemy-body normal';
+          spawnFloat(p.tgt.x, p.tgt.y-20, '🛡 Escudo quebrado!', '#4488ff');
+          p.hit = true; return;
+        }
         if (p.tgt.hp<=0) {
           // partículas de morte
           const pColor = p.tgt.type==='boss'?'#aa44ff':p.tgt.type==='tank'?'#ff6600':p.tgt.type==='fast'?'#44ff88':p.tgt.type==='runner'?'#ff44cc':'#ff2244';
           spawnParticles(p.tgt.x, p.tgt.y, pColor, p.tgt.type==='boss'?12:6);
           registerKill();
+          if(p.tgt.type && killsByType[p.tgt.type]!==undefined) killsByType[p.tgt.type]++;
           if (p.tgt.type==='boss') {
             for (let i=0;i<3;i++) {
               const ne={x:p.tgt.x+(Math.random()-.5)*40,y:p.tgt.y+(Math.random()-.5)*30,
                 hp:p.tgt.maxHp*.18,maxHp:p.tgt.maxHp*.18,speed:p.tgt.speed*1.5,
-                dmg:Math.ceil(p.tgt.dmg*.65),healPower:0,healCd:0,attackCd:0,type:'fast',rageMode:false};
+                dmg:Math.ceil(p.tgt.dmg*.65),healPower:0,healCd:0,attackCd:0,type:'normal',rageMode:false};
               createEnemyEl(ne); enemies.push(ne);
             }
             notify('☠️ Venom se dividiu em 3!');
@@ -915,7 +959,9 @@ function loop(ts) {
       spawnFloat(reiCenter().x, reiCenter().y - 40, '+'+Math.min(wave,8)+' goma bônus!', '#44ddff');
       reiEl.classList.add('celebrate');
       setTimeout(()=>reiEl.classList.remove('celebrate'), 1600);
-      wave++; state='upgrade'; showUpgrades();
+      wave++;
+      if (wave > 2 && wave % 3 === 0) { state='shop'; showShop(); }
+      else { state='upgrade'; showUpgrades(); }
     }
     // GAME OVER
     if (rei.hp<=0 && state==='battle') {
@@ -926,8 +972,8 @@ function loop(ts) {
       document.getElementById('go-msg').innerText = 'Você chegou até a wave '+wave;
       document.getElementById('go-stats').innerText = totalKills+' inimigos eliminados  |  '+score.toLocaleString('pt-BR')+' pts';
       document.getElementById('go-hs').innerText = newHS?'🏆 Novo recorde! Wave '+wave:'🏆 Recorde: Wave '+hs;
-      document.getElementById('ov-go').style.display='flex';
       sfxBoss(); state='dead';
+      setTimeout(showPostGame, 800);
       const pb=document.getElementById('btn-pause'); if(pb) pb.disabled=true;
     }
   }
@@ -997,6 +1043,178 @@ setInterval(checkZoom, 800);
 // Checa na inicialização
 checkZoom();
 
+
+// ═══════════════════════════════════════════
+//  CONQUISTAS
+// ═══════════════════════════════════════════
+const ACHIEVEMENTS = [
+  { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
+  { id:'wave_10',      title:'Veterano',            desc:'Sobreviva até a wave 10',          icon:'⚔️', check:()=>wave>=10 },
+  { id:'wave_20',      title:'Lendário',            desc:'Sobreviva até a wave 20',          icon:'🏆', check:()=>wave>=20 },
+  { id:'kills_100',    title:'Caçador',             desc:'Elimine 100 inimigos',             icon:'💀', check:()=>totalKills>=100 },
+  { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
+  { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
+  { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
+  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
+  { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
+  { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
+  { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
+  { id:'full_upgrade', title:'Max Power',           desc:'Leve qualquer tropa ao nível 3',   icon:'💥', check:()=>units.some(u=>u&&(u.lvl||1)>=3) },
+];
+
+let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
+
+function checkAchievements() {
+  ACHIEVEMENTS.forEach(a => {
+    if (unlockedAchievements.has(a.id)) return;
+    if (a.check()) {
+      unlockedAchievements.add(a.id);
+      localStorage.setItem('chicletao_ach', JSON.stringify([...unlockedAchievements]));
+      showAchievementToast(a);
+    }
+  });
+}
+
+function showAchievementToast(a) {
+  const el = document.createElement('div');
+  el.className = 'ach-toast';
+  el.innerHTML = '<span class="ach-icon">'+a.icon+'</span>'
+    +'<div><div class="ach-title">🏅 Conquista desbloqueada!</div>'
+    +'<div class="ach-name">'+a.title+'</div>'
+    +'<div class="ach-desc">'+a.desc+'</div></div>';
+  document.body.appendChild(el);
+  setTimeout(()=>el.classList.add('show'), 50);
+  setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>el.remove(), 400); }, 3500);
+  sfxWin();
+}
+
+function renderAchievements() {
+  const wrap = document.getElementById('ach-list');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  ACHIEVEMENTS.forEach(a => {
+    const unlocked = unlockedAchievements.has(a.id);
+    const el = document.createElement('div');
+    el.className = 'ach-item'+(unlocked?'':' ach-locked');
+    el.innerHTML = '<span class="ach-icon-sm">'+a.icon+'</span>'
+      +'<div><div class="ach-item-title">'+a.title+'</div>'
+      +'<div class="ach-item-desc">'+a.desc+'</div></div>'
+      +(unlocked?'<span class="ach-check">✅</span>':'<span class="ach-check" style="opacity:.3">🔒</span>');
+    wrap.appendChild(el);
+  });
+}
+
+// ═══════════════════════════════════════════
+//  LOJA ENTRE WAVES
+// ═══════════════════════════════════════════
+const SHOP_ITEMS = [
+  { id:'potion',   name:'Poção de Goma',   desc:'Restaura 25 HP do Rei',          cost:4,  icon:'🧪', fn:()=>{ const h=Math.min(25,rei.maxHp-rei.hp); rei.hp+=h; notify('🧪 +'+Math.round(h)+' HP!'); } },
+  { id:'boost',    name:'Chiclete Turbo',  desc:'+5 dano permanente às tropas',    cost:5,  icon:'⚡', fn:()=>{ upgrades.dmg+=5; notify('⚡ +5 dano!'); } },
+  { id:'cards',    name:'Saco de Cartas',  desc:'Compra 3 cartas aleatórias',      cost:3,  icon:'🃏', fn:()=>{ for(let i=0;i<3;i++) drawCard(); notify('🃏 +3 cartas!'); } },
+  { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
+  { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
+  { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
+    const alive=units.filter(u=>u&&(u.lvl||1)<3);
+    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
+      const base=DECK.find(c=>c.id===u.id);
+      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
+      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
+    else notify('Nenhuma tropa para upar!');
+  }},
+];
+
+function showShop() {
+  const ov = document.getElementById('ov-shop');
+  const wrap = document.getElementById('shop-items');
+  if (!ov||!wrap) return;
+  wrap.innerHTML = '';
+  const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
+  SHOP_ITEMS.forEach(item => {
+    const canBuy = goma >= item.cost;
+    const el = document.createElement('div');
+    el.className = 'shop-item'+(canBuy?'':' shop-cant');
+    el.innerHTML = '<span class="shop-icon">'+item.icon+'</span>'
+      +'<div class="shop-info"><div class="shop-name">'+item.name+'</div>'
+      +'<div class="shop-desc">'+item.desc+'</div></div>'
+      +'<button class="shop-buy'+(canBuy?'':' shop-buy-off')+'" '+(canBuy?'':'disabled')+'>🍬'+item.cost+'</button>';
+    if (canBuy) {
+      el.querySelector('.shop-buy').addEventListener('click', ()=>{
+        goma -= item.cost; item.fn();
+        const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
+        showShop(); // refresh
+      });
+    }
+    wrap.appendChild(el);
+  });
+  ov.style.display = 'flex';
+}
+
+function closeShop() {
+  document.getElementById('ov-shop').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════
+//  HISTÓRICO DE RUNS
+// ═══════════════════════════════════════════
+function saveRun() {
+  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  runs.unshift({ wave, score, kills:totalKills, diff:difficulty, date:new Date().toLocaleDateString('pt-BR') });
+  localStorage.setItem('chicletao_runs', JSON.stringify(runs.slice(0,5)));
+}
+function renderHistory() {
+  const wrap = document.getElementById('run-history');
+  if (!wrap) return;
+  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  if (!runs.length) { wrap.innerHTML='<p style="color:#666;font-size:12px">Nenhuma partida ainda</p>'; return; }
+  wrap.innerHTML = runs.map((r,i)=>
+    '<div class="run-row">'
+    +'<span class="run-num">#'+(i+1)+'</span>'
+    +'<span>Wave <b>'+r.wave+'</b></span>'
+    +'<span><b>'+r.score.toLocaleString('pt-BR')+'</b> pts</span>'
+    +'<span>'+r.kills+' kills</span>'
+    +'<span class="run-diff run-'+r.diff+'">'+r.diff+'</span>'
+    +'<span class="run-date">'+r.date+'</span>'
+    +'</div>'
+  ).join('');
+}
+
+// ═══════════════════════════════════════════
+//  STATS PÓS-PARTIDA
+// ═══════════════════════════════════════════
+let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+
+function showPostGame() {
+  saveRun();
+  const hs=getHS(), newHS=wave>hs; if(newHS) setHS(wave);
+  const hsScore=parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
+  if(score>hsScore) localStorage.setItem('chicletao_hs_score',score);
+
+  document.getElementById('pg-wave').textContent    = wave;
+  document.getElementById('pg-score').textContent   = score.toLocaleString('pt-BR');
+  document.getElementById('pg-kills').textContent   = totalKills;
+  document.getElementById('pg-hs').textContent      = newHS ? '🏆 Novo recorde de waves!' : 'Recorde: Wave '+hs;
+  const pgd=document.getElementById('pg-diff'); if(pgd){pgd.textContent=difficulty; pgd.className='pg-val pg-diff pg-'+difficulty;}
+  // kills por tipo
+  const kl = document.getElementById('pg-kills-breakdown');
+  if (kl) kl.innerHTML = Object.entries(killsByType)
+    .filter(([,v])=>v>0)
+    .map(([k,v])=>'<span class="pg-ktype">'+({'normal':'💀','tank':'🛡️','fast':'💨','boss':'👹','healer':'💊','runner':'🏃','armored':'🪖'}[k]||'❓')+' '+k+': <b>'+v+'</b></span>')
+    .join('');
+
+  renderHistory();
+  renderAchievements();
+  document.getElementById('ov-postGame').style.display='flex';
+  document.getElementById('ov-go').style.display='none';
+}
+
+function setDifficulty(d) {
+  difficulty = d;
+  ['easy','normal','hard'].forEach(v=>{
+    const b=document.getElementById('diff-'+v);
+    if(b) b.classList.toggle('diff-active', v===d);
+  });
+}
+
 requestAnimationFrame(loop);
 }
 
@@ -1063,5 +1281,177 @@ window.addEventListener('resize', checkZoom);
 setInterval(checkZoom, 800);
 // Checa na inicialização
 checkZoom();
+
+
+// ═══════════════════════════════════════════
+//  CONQUISTAS
+// ═══════════════════════════════════════════
+const ACHIEVEMENTS = [
+  { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
+  { id:'wave_10',      title:'Veterano',            desc:'Sobreviva até a wave 10',          icon:'⚔️', check:()=>wave>=10 },
+  { id:'wave_20',      title:'Lendário',            desc:'Sobreviva até a wave 20',          icon:'🏆', check:()=>wave>=20 },
+  { id:'kills_100',    title:'Caçador',             desc:'Elimine 100 inimigos',             icon:'💀', check:()=>totalKills>=100 },
+  { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
+  { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
+  { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
+  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
+  { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
+  { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
+  { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
+  { id:'full_upgrade', title:'Max Power',           desc:'Leve qualquer tropa ao nível 3',   icon:'💥', check:()=>units.some(u=>u&&(u.lvl||1)>=3) },
+];
+
+let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
+
+function checkAchievements() {
+  ACHIEVEMENTS.forEach(a => {
+    if (unlockedAchievements.has(a.id)) return;
+    if (a.check()) {
+      unlockedAchievements.add(a.id);
+      localStorage.setItem('chicletao_ach', JSON.stringify([...unlockedAchievements]));
+      showAchievementToast(a);
+    }
+  });
+}
+
+function showAchievementToast(a) {
+  const el = document.createElement('div');
+  el.className = 'ach-toast';
+  el.innerHTML = '<span class="ach-icon">'+a.icon+'</span>'
+    +'<div><div class="ach-title">🏅 Conquista desbloqueada!</div>'
+    +'<div class="ach-name">'+a.title+'</div>'
+    +'<div class="ach-desc">'+a.desc+'</div></div>';
+  document.body.appendChild(el);
+  setTimeout(()=>el.classList.add('show'), 50);
+  setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>el.remove(), 400); }, 3500);
+  sfxWin();
+}
+
+function renderAchievements() {
+  const wrap = document.getElementById('ach-list');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  ACHIEVEMENTS.forEach(a => {
+    const unlocked = unlockedAchievements.has(a.id);
+    const el = document.createElement('div');
+    el.className = 'ach-item'+(unlocked?'':' ach-locked');
+    el.innerHTML = '<span class="ach-icon-sm">'+a.icon+'</span>'
+      +'<div><div class="ach-item-title">'+a.title+'</div>'
+      +'<div class="ach-item-desc">'+a.desc+'</div></div>'
+      +(unlocked?'<span class="ach-check">✅</span>':'<span class="ach-check" style="opacity:.3">🔒</span>');
+    wrap.appendChild(el);
+  });
+}
+
+// ═══════════════════════════════════════════
+//  LOJA ENTRE WAVES
+// ═══════════════════════════════════════════
+const SHOP_ITEMS = [
+  { id:'potion',   name:'Poção de Goma',   desc:'Restaura 25 HP do Rei',          cost:4,  icon:'🧪', fn:()=>{ const h=Math.min(25,rei.maxHp-rei.hp); rei.hp+=h; notify('🧪 +'+Math.round(h)+' HP!'); } },
+  { id:'boost',    name:'Chiclete Turbo',  desc:'+5 dano permanente às tropas',    cost:5,  icon:'⚡', fn:()=>{ upgrades.dmg+=5; notify('⚡ +5 dano!'); } },
+  { id:'cards',    name:'Saco de Cartas',  desc:'Compra 3 cartas aleatórias',      cost:3,  icon:'🃏', fn:()=>{ for(let i=0;i<3;i++) drawCard(); notify('🃏 +3 cartas!'); } },
+  { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
+  { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
+  { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
+    const alive=units.filter(u=>u&&(u.lvl||1)<3);
+    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
+      const base=DECK.find(c=>c.id===u.id);
+      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
+      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
+    else notify('Nenhuma tropa para upar!');
+  }},
+];
+
+function showShop() {
+  const ov = document.getElementById('ov-shop');
+  const wrap = document.getElementById('shop-items');
+  if (!ov||!wrap) return;
+  wrap.innerHTML = '';
+  const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
+  SHOP_ITEMS.forEach(item => {
+    const canBuy = goma >= item.cost;
+    const el = document.createElement('div');
+    el.className = 'shop-item'+(canBuy?'':' shop-cant');
+    el.innerHTML = '<span class="shop-icon">'+item.icon+'</span>'
+      +'<div class="shop-info"><div class="shop-name">'+item.name+'</div>'
+      +'<div class="shop-desc">'+item.desc+'</div></div>'
+      +'<button class="shop-buy'+(canBuy?'':' shop-buy-off')+'" '+(canBuy?'':'disabled')+'>🍬'+item.cost+'</button>';
+    if (canBuy) {
+      el.querySelector('.shop-buy').addEventListener('click', ()=>{
+        goma -= item.cost; item.fn();
+        const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
+        showShop(); // refresh
+      });
+    }
+    wrap.appendChild(el);
+  });
+  ov.style.display = 'flex';
+}
+
+function closeShop() {
+  document.getElementById('ov-shop').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════
+//  HISTÓRICO DE RUNS
+// ═══════════════════════════════════════════
+function saveRun() {
+  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  runs.unshift({ wave, score, kills:totalKills, diff:difficulty, date:new Date().toLocaleDateString('pt-BR') });
+  localStorage.setItem('chicletao_runs', JSON.stringify(runs.slice(0,5)));
+}
+function renderHistory() {
+  const wrap = document.getElementById('run-history');
+  if (!wrap) return;
+  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  if (!runs.length) { wrap.innerHTML='<p style="color:#666;font-size:12px">Nenhuma partida ainda</p>'; return; }
+  wrap.innerHTML = runs.map((r,i)=>
+    '<div class="run-row">'
+    +'<span class="run-num">#'+(i+1)+'</span>'
+    +'<span>Wave <b>'+r.wave+'</b></span>'
+    +'<span><b>'+r.score.toLocaleString('pt-BR')+'</b> pts</span>'
+    +'<span>'+r.kills+' kills</span>'
+    +'<span class="run-diff run-'+r.diff+'">'+r.diff+'</span>'
+    +'<span class="run-date">'+r.date+'</span>'
+    +'</div>'
+  ).join('');
+}
+
+// ═══════════════════════════════════════════
+//  STATS PÓS-PARTIDA
+// ═══════════════════════════════════════════
+let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+
+function showPostGame() {
+  saveRun();
+  const hs=getHS(), newHS=wave>hs; if(newHS) setHS(wave);
+  const hsScore=parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
+  if(score>hsScore) localStorage.setItem('chicletao_hs_score',score);
+
+  document.getElementById('pg-wave').textContent    = wave;
+  document.getElementById('pg-score').textContent   = score.toLocaleString('pt-BR');
+  document.getElementById('pg-kills').textContent   = totalKills;
+  document.getElementById('pg-hs').textContent      = newHS ? '🏆 Novo recorde de waves!' : 'Recorde: Wave '+hs;
+  const pgd=document.getElementById('pg-diff'); if(pgd){pgd.textContent=difficulty; pgd.className='pg-val pg-diff pg-'+difficulty;}
+  // kills por tipo
+  const kl = document.getElementById('pg-kills-breakdown');
+  if (kl) kl.innerHTML = Object.entries(killsByType)
+    .filter(([,v])=>v>0)
+    .map(([k,v])=>'<span class="pg-ktype">'+({'normal':'💀','tank':'🛡️','fast':'💨','boss':'👹','healer':'💊','runner':'🏃','armored':'🪖'}[k]||'❓')+' '+k+': <b>'+v+'</b></span>')
+    .join('');
+
+  renderHistory();
+  renderAchievements();
+  document.getElementById('ov-postGame').style.display='flex';
+  document.getElementById('ov-go').style.display='none';
+}
+
+function setDifficulty(d) {
+  difficulty = d;
+  ['easy','normal','hard'].forEach(v=>{
+    const b=document.getElementById('diff-'+v);
+    if(b) b.classList.toggle('diff-active', v===d);
+  });
+}
 
 requestAnimationFrame(loop);

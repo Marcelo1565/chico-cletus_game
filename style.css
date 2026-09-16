@@ -148,7 +148,7 @@ body{background:var(--dark);color:#fff;font-family:'Segoe UI',Arial,sans-serif;
   border:1px solid rgba(160,80,0,.3);pointer-events:none;transform:translate(-50%,-50%);z-index:1}
 
 /* BOTÕES ARENA */
-#wave-badge{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+#wave-badge{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);transition:opacity .3s,transform .3s;
   font-size:11px;font-weight:700;color:#ff88aa;background:rgba(20,0,8,.85);
   padding:4px 14px;border-radius:20px;border:1px solid var(--border2);
   z-index:3;opacity:0;transition:opacity .3s;pointer-events:none}
@@ -346,3 +346,113 @@ body{background:var(--dark);color:#fff;font-family:'Segoe UI',Arial,sans-serif;
   font-size:14px;color:#ff88aa;letter-spacing:1px;
 }
 #zoom-val { color:#ffd700;font-weight:900; }
+/* ARMADO */
+.enemy-hp.armored-hp { background:linear-gradient(90deg,#2244cc,#4488ff); }
+.enemy-body.armored  { border-color:#4488ff; box-shadow:0 0 12px rgba(68,136,255,.5); }
+
+/* CONQUISTAS TOAST */
+.ach-toast {
+  position:fixed; bottom:80px; right:-320px; width:290px;
+  background:linear-gradient(135deg,#1a0010,#2a0020);
+  border:2px solid var(--gold); border-radius:12px;
+  padding:12px 14px; z-index:60; display:flex; gap:10px; align-items:center;
+  transition:right .4s cubic-bezier(.175,.885,.32,1.275);
+  box-shadow:0 4px 24px rgba(255,215,0,.2);
+}
+.ach-toast.show { right:16px; }
+.ach-icon  { font-size:28px; flex-shrink:0; }
+.ach-title { font-size:8px; color:var(--gold); text-transform:uppercase; letter-spacing:1px; font-weight:700; }
+.ach-name  { font-size:13px; font-weight:900; color:#ffd0dd; }
+.ach-desc  { font-size:10px; color:#886677; margin-top:2px; }
+
+/* LOJA */
+#ov-shop {
+  position:fixed; inset:0; background:rgba(0,0,0,.92);
+  display:none; flex-direction:column; align-items:center;
+  justify-content:center; z-index:32; gap:14px; padding:16px;
+}
+#ov-shop h2 { font-size:clamp(16px,4vw,22px); color:#ffdd44; letter-spacing:2px; text-transform:uppercase; }
+#shop-header { font-size:13px; color:#886677; }
+#shop-header b { color:#ffd700; }
+#shop-items { display:flex; flex-direction:column; gap:8px; width:100%; max-width:460px; }
+.shop-item  {
+  display:flex; align-items:center; gap:10px;
+  background:linear-gradient(135deg,#1a000a,#110005);
+  border:1px solid var(--border); border-radius:10px; padding:10px 12px;
+}
+.shop-item.shop-cant { opacity:.45; }
+.shop-icon  { font-size:26px; flex-shrink:0; }
+.shop-info  { flex:1; }
+.shop-name  { font-size:12px; font-weight:700; color:#ffd0dd; }
+.shop-desc  { font-size:10px; color:#886677; margin-top:2px; }
+.shop-buy   {
+  padding:6px 12px; background:linear-gradient(135deg,#aa0033,#ff2255);
+  border:none; border-radius:7px; color:#fff; font-size:11px; font-weight:700;
+  cursor:pointer; white-space:nowrap; flex-shrink:0;
+}
+.shop-buy-off { background:#2a000e; color:#664444; cursor:not-allowed; }
+#shop-skip { font-size:11px; color:#886677; cursor:pointer; text-decoration:underline; margin-top:4px; }
+#shop-skip:hover { color:#ff88aa; }
+
+/* TELA DE ESTATÍSTICAS */
+#ov-postGame {
+  position:fixed; inset:0; background:rgba(0,0,0,.95);
+  display:none; flex-direction:column; align-items:center;
+  justify-content:flex-start; z-index:35; gap:10px;
+  padding:20px 16px; overflow-y:auto;
+}
+#ov-postGame h1 { font-size:clamp(24px,6vw,38px); color:#ff2244; font-weight:900; }
+.pg-grid {
+  display:grid; grid-template-columns:repeat(2,1fr); gap:8px;
+  width:100%; max-width:480px;
+}
+.pg-card {
+  background:linear-gradient(135deg,#1a000a,#110005);
+  border:1px solid var(--border); border-radius:10px;
+  padding:10px 14px; text-align:center;
+}
+.pg-card .pg-label { font-size:9px; color:#cc7788; text-transform:uppercase; letter-spacing:1px; }
+.pg-card .pg-val   { font-size:24px; font-weight:900; color:#ffd0dd; }
+#pg-kills-breakdown { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; max-width:480px; }
+.pg-ktype { font-size:11px; color:#886677; background:rgba(255,255,255,.04); border-radius:5px; padding:3px 8px; }
+.pg-ktype b { color:#ffd0dd; }
+.pg-hs { font-size:12px; color:var(--gold); font-weight:700; }
+.pg-diff { font-size:11px; text-transform:uppercase; font-weight:700; }
+.pg-diff.pg-easy { color:#44ff88; } .pg-diff.pg-normal { color:#ffdd44; } .pg-diff.pg-hard { color:#ff4444; }
+/* Separador de seção */
+.pg-section { font-size:10px; color:#cc7788; text-transform:uppercase; letter-spacing:2px;
+  width:100%; max-width:480px; border-bottom:1px solid var(--border2); padding-bottom:4px; margin-top:6px; }
+/* Histórico */
+#run-history { width:100%; max-width:480px; display:flex; flex-direction:column; gap:4px; }
+.run-row { display:flex; align-items:center; gap:8px; font-size:11px; color:#886677;
+  background:rgba(255,255,255,.03); border-radius:6px; padding:5px 10px; flex-wrap:wrap; }
+.run-row b { color:#ffd0dd; }
+.run-num   { color:#ff4466; font-weight:700; min-width:20px; }
+.run-diff  { padding:1px 5px; border-radius:4px; font-size:9px; font-weight:700; text-transform:uppercase; }
+.run-easy  { background:#003322; color:#44ff88; } .run-normal { background:#332200; color:#ffdd44; } .run-hard { background:#330000; color:#ff4444; }
+.run-date  { margin-left:auto; font-size:9px; opacity:.5; }
+/* Conquistas na post-game */
+#ach-list { width:100%; max-width:480px; display:flex; flex-direction:column; gap:4px; max-height:200px; overflow-y:auto; }
+.ach-item { display:flex; align-items:center; gap:8px; font-size:11px; color:#886677;
+  background:rgba(255,255,255,.03); border-radius:6px; padding:5px 10px; }
+.ach-item.ach-locked { opacity:.4; }
+.ach-icon-sm  { font-size:18px; flex-shrink:0; }
+.ach-item-title { font-size:11px; font-weight:700; color:#ffd0dd; }
+.ach-item-desc  { font-size:9px; }
+.ach-check { margin-left:auto; font-size:14px; }
+
+/* DIFICULDADE no menu título */
+.diff-row { display:flex; gap:8px; }
+.diff-btn {
+  padding:8px 18px; border:2px solid var(--border); border-radius:8px;
+  background:rgba(20,0,8,.8); color:#886677; font-size:12px; font-weight:700;
+  cursor:pointer; transition:all .12s; -webkit-tap-highlight-color:transparent;
+}
+.diff-btn:hover { border-color:#ff88aa; color:#ffd0dd; }
+.diff-active { color:#fff !important; }
+#diff-easy.diff-active   { border-color:#44ff88; background:rgba(0,80,40,.3); color:#44ff88 !important; }
+#diff-normal.diff-active { border-color:#ffdd44; background:rgba(80,60,0,.3); color:#ffdd44 !important; }
+#diff-hard.diff-active   { border-color:#ff4444; background:rgba(80,0,0,.3); color:#ff4444 !important; }
+
+.shop-item:not(.shop-cant) { transition:border-color .12s,transform .1s; cursor:default; }
+.shop-item:not(.shop-cant):hover { border-color:#ff88aa; transform:translateX(3px); }

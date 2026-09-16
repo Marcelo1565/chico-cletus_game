@@ -73,11 +73,13 @@
     <div class="le"><span>👹</span><span>Boss — rage a 40% HP</span></div>
     <div class="le"><span>💊</span><span>Curador — heala aliados</span></div>
     <div class="le"><span>🏃</span><span>Corredor — ignora tropas</span></div>
+    <div class="le"><span>🪖</span><span>Armado — 1 hit quebra escudo</span></div>
     <b style="color:#ff88aa;font-size:9px;text-transform:uppercase;letter-spacing:1px;display:block;margin-top:6px">Tropas</b>
     <div class="le"><span>🎯</span><span>Franqueiro — 20% crítico</span></div>
     <div class="le"><span>🟤</span><span>Sticky — rastro automático</span></div>
     <div class="le"><span>🍡</span><span>Blocão — recebe foco</span></div>
     <div class="le"><span>💚</span><span>Healer — cura vizinhos</span></div>
+    <div class="le"><span>🍬</span><span>Mascador — regen vizinhos</span></div>
   </div>
   <button id="btn-wave" onclick="startWave()">⚔️ Invocar Horda</button>
   <div id="field">
@@ -133,9 +135,41 @@
   <h1>Reino do Chicletão</h1>
   <p class="sub">Defenda o Rei com suas tropas de chiclete.<br>Coloque cartas no grid, invoque a horda e sobreviva!</p>
   <p class="hs-line" id="title-hs"></p>
-  <button class="bbig" id="btn-start" style="font-size:16px;padding:14px 36px;margin-top:8px">🍬 Jogar</button>
+  <div class="diff-row">
+    <button class="diff-btn" id="diff-easy"   onclick="setDifficulty('easy')">🟢 Fácil</button>
+    <button class="diff-btn diff-active" id="diff-normal" onclick="setDifficulty('normal')">🟡 Normal</button>
+    <button class="diff-btn" id="diff-hard"   onclick="setDifficulty('hard')">🔴 Difícil</button>
+  </div>
+  <button class="bbig" id="btn-start" style="font-size:16px;padding:14px 36px;margin-top:4px">🍬 Jogar</button>
 </div>
 
 <script src="script.js"></script>
+
+<!-- OVERLAY LOJA -->
+<div id="ov-shop">
+  <h2>🛒 Loja de Goma</h2>
+  <p id="shop-header">Goma disponível: <b><span id="shop-goma">0</span></b> 🍬</p>
+  <div id="shop-items"></div>
+  <span id="shop-skip" onclick="closeShop()">Pular loja →</span>
+</div>
+
+<!-- OVERLAY PÓS-PARTIDA -->
+<div id="ov-postGame">
+  <h1>💀 Derrota!</h1>
+  <div class="pg-grid">
+    <div class="pg-card"><div class="pg-label">Wave</div><div class="pg-val" id="pg-wave">—</div></div>
+    <div class="pg-card"><div class="pg-label">Score</div><div class="pg-val" id="pg-score">—</div></div>
+    <div class="pg-card"><div class="pg-label">Kills</div><div class="pg-val" id="pg-kills">—</div></div>
+    <div class="pg-card"><div class="pg-label">Dificuldade</div><div class="pg-val pg-diff" id="pg-diff">—</div></div>
+  </div>
+  <p class="pg-hs" id="pg-hs"></p>
+  <div id="pg-kills-breakdown"></div>
+  <div class="pg-section">Últimas 5 partidas</div>
+  <div id="run-history"></div>
+  <div class="pg-section">Conquistas</div>
+  <div id="ach-list"></div>
+  <button class="bbig" onclick="location.reload()" style="margin-top:10px">🔄 Tentar novamente</button>
+</div>
+
 </body>
 </html>
