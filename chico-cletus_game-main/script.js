@@ -15,6 +15,39 @@ let handDirty=true;
 let autoWaveTimer=null, awStartTime=0;
 const AW_DELAY = 4000;
 let totalKills=0, score=0, gameStarted=false;
+let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+
+const ACHIEVEMENTS = [
+  { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
+  { id:'wave_10',      title:'Veterano',            desc:'Sobreviva até a wave 10',          icon:'⚔️', check:()=>wave>=10 },
+  { id:'wave_20',      title:'Lendário',            desc:'Sobreviva até a wave 20',          icon:'🏆', check:()=>wave>=20 },
+  { id:'kills_100',    title:'Caçador',             desc:'Elimine 100 inimigos',             icon:'💀', check:()=>totalKills>=100 },
+  { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
+  { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
+  { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
+  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
+  { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
+  { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
+  { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
+  { id:'full_upgrade', title:'Max Power',           desc:'Leve qualquer tropa ao nível 3',   icon:'💥', check:()=>units.some(u=>u&&(u.lvl||1)>=3) },
+];
+
+const SHOP_ITEMS = [
+  { id:'potion',   name:'Poção de Goma',   desc:'Restaura 25 HP do Rei',          cost:4,  icon:'🧪', fn:()=>{ const h=Math.min(25,rei.maxHp-rei.hp); rei.hp+=h; notify('🧪 +'+Math.round(h)+' HP!'); } },
+  { id:'boost',    name:'Chiclete Turbo',  desc:'+5 dano permanente às tropas',    cost:5,  icon:'⚡', fn:()=>{ upgrades.dmg+=5; notify('⚡ +5 dano!'); } },
+  { id:'cards',    name:'Saco de Cartas',  desc:'Compra 3 cartas aleatórias',      cost:3,  icon:'🃏', fn:()=>{ for(let i=0;i<3;i++) drawCard(); notify('🃏 +3 cartas!'); } },
+  { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
+  { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
+  { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
+    const alive=units.filter(u=>u&&(u.lvl||1)<3);
+    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
+      const base=DECK.find(c=>c.id===u.id);
+      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
+      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
+    else notify('Nenhuma tropa para upar!');
+  }},
+];
+
 let difficulty='normal'; // 'easy' | 'normal' | 'hard'
 let gameSpeed=1, paused=false;
 let comboCount=0, comboTimer=null;
@@ -97,6 +130,9 @@ function hasTaunt() { return units.some(u=>u&&u.id==='tanque'); }
 //  PARTÍCULAS DE MORTE
 // ═══════════════════════════════════════════
 function spawnParticles(x, y, color, count=6) {
+  // Remover partículas antigas se acima do limite
+  const existing = document.querySelectorAll('.particle');
+  if(existing.length > 40) existing.forEach((el,i)=>{ if(i<existing.length-30) el.remove(); });
   for (let i=0; i<count; i++) {
     const el = document.createElement('div');
     el.className = 'particle';
@@ -451,6 +487,8 @@ function spawnFloat(x,y,txt,color='#ff4466') {
   const el=document.createElement('div'); el.className='float-el';
   el.style.left=x+'px'; el.style.top=y+'px'; el.style.color=color;
   el.innerText=txt; arena.appendChild(el);
+  // Limite de 30 floats simultâneos para evitar entupimento do DOM
+  if(floats.length>=30){ floats[0].el.remove(); floats.shift(); }
   floats.push({el, y, vy:-1.2+(Math.random()-.5)*.4, life:1});
 }
 let shakeTimer=null;
@@ -794,15 +832,16 @@ function loop(ts) {
           // Passiva: regen +3 HP nas tropas vizinhas (célula adjacente)
           const adjacents=[-1,1,-COLS,COLS,-COLS-1,-COLS+1,COLS-1,COLS+1];
           const myIdx=u.row*COLS+u.col;
+          let totalRegen=0;
           adjacents.forEach(delta=>{
             const ni=myIdx+delta; if(ni<0||ni>=25) return;
             const ally=units[ni]; if(!ally||ally===u||ally.hp>=ally.maxHp) return;
-            const h=Math.min(3,ally.maxHp-ally.hp); ally.hp+=h;
-            const acc=cellCenter(ally.col,ally.row);
-            spawnFloat(acc.x,acc.y-14,'+'+h,'#aaffcc');
+            const h=Math.min(3,ally.maxHp-ally.hp); ally.hp+=h; totalRegen+=h;
             const hpEl=getCellEl(ni).querySelector('.hp-bar');
             if(hpEl){const pct=ally.hp/ally.maxHp;hpEl.style.width=pct*100+'%';hpEl.style.background=pct>.5?'#44cc88':pct>.25?'#ffcc00':'#ff2244';}
           });
+          // float único por ciclo, só se curou alguém
+          if(totalRegen>0){const cc2=cellCenter(u.col,u.row);spawnFloat(cc2.x,cc2.y-18,'+'+totalRegen+'💚','#aaffcc');}
           const t=nearestEnemy(cellCenter(u.col,u.row).x,cellCenter(u.col,u.row).y);
           if(t){
             const dmg=u.dmg+upgrades.dmg+syn;
@@ -884,43 +923,44 @@ function loop(ts) {
 
     // PROJÉTEIS
     projs.forEach(p=>{
-      if (!p.tgt||p.tgt.hp<=0){p.hit=true;return;}
-      toward(p,p.tgt.x,p.tgt.y,p.spd*physSpd);
-      p.el.style.left=p.x+'px'; p.el.style.top=p.y+'px';
-      if (dist(p.x,p.y,p.tgt.x,p.tgt.y)<14) {
-        p.tgt.hp-=p.dmg;
+      // Guarda referência local e valida antes de qualquer acesso
+      const tgt=p.tgt;
+      if (!tgt || tgt._dying || tgt.hp===undefined) { p.hit=true; return; }
+      toward(p,tgt.x,tgt.y,p.spd*physSpd);
+      if (p.el) { p.el.style.left=p.x+'px'; p.el.style.top=p.y+'px'; }
+      if (dist(p.x,p.y,tgt.x,tgt.y)<14) {
+        // Escudo: absorve hit sem dano
+        if (tgt.shielded) {
+          tgt.shielded=false;
+          if (tgt.bodyEl) { tgt.bodyEl.style.opacity='0.75'; tgt.bodyEl.innerText='💀'; tgt.bodyEl.className='enemy-body normal'; }
+          spawnFloat(tgt.x,tgt.y-20,'🛡 Escudo quebrado!','#4488ff');
+          spawnParticles(tgt.x,tgt.y,'#4488ff',5);
+          p.hit=true; return;
+        }
+        tgt.hp-=p.dmg;
         if (p.isCrit) {
           const cel=document.createElement('div'); cel.className='crit-float';
-          cel.style.left=p.tgt.x+'px'; cel.style.top=(p.tgt.y-20)+'px';
+          cel.style.left=tgt.x+'px'; cel.style.top=(tgt.y-20)+'px';
           cel.textContent='★ CRÍTICO! '+p.dmg;
           arena.appendChild(cel); setTimeout(()=>cel.remove(),700);
         }
-        // Armored: primeiro hit quebra escudo
-        if (p.tgt.shielded) {
-          p.tgt.shielded = false;
-          p.tgt.hp = p.tgt.maxHp; // restaura HP — escudo foi o hit
-          p.tgt.bodyEl.style.opacity = '0.7';
-          p.tgt.bodyEl.innerText = '💀'; // virou normal
-          p.tgt.bodyEl.className = 'enemy-body normal';
-          spawnFloat(p.tgt.x, p.tgt.y-20, '🛡 Escudo quebrado!', '#4488ff');
-          p.hit = true; return;
-        }
-        if (p.tgt.hp<=0) {
-          // partículas de morte
-          const pColor = p.tgt.type==='boss'?'#aa44ff':p.tgt.type==='tank'?'#ff6600':p.tgt.type==='fast'?'#44ff88':p.tgt.type==='runner'?'#ff44cc':'#ff2244';
-          spawnParticles(p.tgt.x, p.tgt.y, pColor, p.tgt.type==='boss'?12:6);
+        if (tgt.hp<=0 && !tgt._dying) {
+          tgt._dying=true;
+          const type=tgt.type||'normal';
+          const pColor=type==='boss'?'#aa44ff':type==='tank'?'#ff6600':type==='fast'?'#44ff88':type==='runner'?'#ff44cc':'#ff2244';
+          spawnParticles(tgt.x,tgt.y,pColor,type==='boss'?12:6);
           registerKill();
-          if(p.tgt.type && killsByType[p.tgt.type]!==undefined) killsByType[p.tgt.type]++;
-          if (p.tgt.type==='boss') {
+          killsByType[type]=(killsByType[type]||0)+1;
+          if (type==='boss') {
             for (let i=0;i<3;i++) {
-              const ne={x:p.tgt.x+(Math.random()-.5)*40,y:p.tgt.y+(Math.random()-.5)*30,
-                hp:p.tgt.maxHp*.18,maxHp:p.tgt.maxHp*.18,speed:p.tgt.speed*1.5,
-                dmg:Math.ceil(p.tgt.dmg*.65),healPower:0,healCd:0,attackCd:0,type:'normal',rageMode:false};
+              const ne={x:tgt.x+(Math.random()-.5)*40,y:tgt.y+(Math.random()-.5)*30,
+                hp:tgt.maxHp*.18,maxHp:tgt.maxHp*.18,speed:tgt.speed*1.5,
+                dmg:Math.ceil(tgt.dmg*.65),healPower:0,healCd:0,attackCd:0,type:'normal',rageMode:false,shielded:false};
               createEnemyEl(ne); enemies.push(ne);
             }
             notify('☠️ Venom se dividiu em 3!');
           }
-          if (p.tgt.el) p.tgt.el.classList.add('dying');
+          if (tgt.el) { tgt.el.classList.add('dying'); setTimeout(()=>{ if(tgt.el) tgt.el.remove(); },320); }
         }
         p.hit=true;
       }
@@ -1047,21 +1087,7 @@ checkZoom();
 // ═══════════════════════════════════════════
 //  CONQUISTAS
 // ═══════════════════════════════════════════
-const ACHIEVEMENTS = [
-  { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
-  { id:'wave_10',      title:'Veterano',            desc:'Sobreviva até a wave 10',          icon:'⚔️', check:()=>wave>=10 },
-  { id:'wave_20',      title:'Lendário',            desc:'Sobreviva até a wave 20',          icon:'🏆', check:()=>wave>=20 },
-  { id:'kills_100',    title:'Caçador',             desc:'Elimine 100 inimigos',             icon:'💀', check:()=>totalKills>=100 },
-  { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
-  { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
-  { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
-  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
-  { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
-  { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
-  { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
-  { id:'full_upgrade', title:'Max Power',           desc:'Leve qualquer tropa ao nível 3',   icon:'💥', check:()=>units.some(u=>u&&(u.lvl||1)>=3) },
-];
-
+// ACHIEVEMENTS moved to top
 let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
 
 function checkAchievements() {
@@ -1107,22 +1133,7 @@ function renderAchievements() {
 // ═══════════════════════════════════════════
 //  LOJA ENTRE WAVES
 // ═══════════════════════════════════════════
-const SHOP_ITEMS = [
-  { id:'potion',   name:'Poção de Goma',   desc:'Restaura 25 HP do Rei',          cost:4,  icon:'🧪', fn:()=>{ const h=Math.min(25,rei.maxHp-rei.hp); rei.hp+=h; notify('🧪 +'+Math.round(h)+' HP!'); } },
-  { id:'boost',    name:'Chiclete Turbo',  desc:'+5 dano permanente às tropas',    cost:5,  icon:'⚡', fn:()=>{ upgrades.dmg+=5; notify('⚡ +5 dano!'); } },
-  { id:'cards',    name:'Saco de Cartas',  desc:'Compra 3 cartas aleatórias',      cost:3,  icon:'🃏', fn:()=>{ for(let i=0;i<3;i++) drawCard(); notify('🃏 +3 cartas!'); } },
-  { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
-  { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
-  { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
-    const alive=units.filter(u=>u&&(u.lvl||1)<3);
-    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
-      const base=DECK.find(c=>c.id===u.id);
-      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
-      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
-    else notify('Nenhuma tropa para upar!');
-  }},
-];
-
+// SHOP_ITEMS moved to top
 function showShop() {
   const ov = document.getElementById('ov-shop');
   const wrap = document.getElementById('shop-items');
@@ -1151,6 +1162,7 @@ function showShop() {
 
 function closeShop() {
   document.getElementById('ov-shop').style.display = 'none';
+  state='upgrade'; showUpgrades();
 }
 
 // ═══════════════════════════════════════════
@@ -1181,7 +1193,7 @@ function renderHistory() {
 // ═══════════════════════════════════════════
 //  STATS PÓS-PARTIDA
 // ═══════════════════════════════════════════
-let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+// killsByType moved to top
 
 function showPostGame() {
   saveRun();
@@ -1286,21 +1298,7 @@ checkZoom();
 // ═══════════════════════════════════════════
 //  CONQUISTAS
 // ═══════════════════════════════════════════
-const ACHIEVEMENTS = [
-  { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
-  { id:'wave_10',      title:'Veterano',            desc:'Sobreviva até a wave 10',          icon:'⚔️', check:()=>wave>=10 },
-  { id:'wave_20',      title:'Lendário',            desc:'Sobreviva até a wave 20',          icon:'🏆', check:()=>wave>=20 },
-  { id:'kills_100',    title:'Caçador',             desc:'Elimine 100 inimigos',             icon:'💀', check:()=>totalKills>=100 },
-  { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
-  { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
-  { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
-  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
-  { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
-  { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
-  { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
-  { id:'full_upgrade', title:'Max Power',           desc:'Leve qualquer tropa ao nível 3',   icon:'💥', check:()=>units.some(u=>u&&(u.lvl||1)>=3) },
-];
-
+// ACHIEVEMENTS moved to top
 let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
 
 function checkAchievements() {
@@ -1346,22 +1344,7 @@ function renderAchievements() {
 // ═══════════════════════════════════════════
 //  LOJA ENTRE WAVES
 // ═══════════════════════════════════════════
-const SHOP_ITEMS = [
-  { id:'potion',   name:'Poção de Goma',   desc:'Restaura 25 HP do Rei',          cost:4,  icon:'🧪', fn:()=>{ const h=Math.min(25,rei.maxHp-rei.hp); rei.hp+=h; notify('🧪 +'+Math.round(h)+' HP!'); } },
-  { id:'boost',    name:'Chiclete Turbo',  desc:'+5 dano permanente às tropas',    cost:5,  icon:'⚡', fn:()=>{ upgrades.dmg+=5; notify('⚡ +5 dano!'); } },
-  { id:'cards',    name:'Saco de Cartas',  desc:'Compra 3 cartas aleatórias',      cost:3,  icon:'🃏', fn:()=>{ for(let i=0;i<3;i++) drawCard(); notify('🃏 +3 cartas!'); } },
-  { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
-  { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
-  { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
-    const alive=units.filter(u=>u&&(u.lvl||1)<3);
-    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
-      const base=DECK.find(c=>c.id===u.id);
-      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
-      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
-    else notify('Nenhuma tropa para upar!');
-  }},
-];
-
+// SHOP_ITEMS moved to top
 function showShop() {
   const ov = document.getElementById('ov-shop');
   const wrap = document.getElementById('shop-items');
@@ -1390,6 +1373,7 @@ function showShop() {
 
 function closeShop() {
   document.getElementById('ov-shop').style.display = 'none';
+  state='upgrade'; showUpgrades();
 }
 
 // ═══════════════════════════════════════════
@@ -1420,7 +1404,7 @@ function renderHistory() {
 // ═══════════════════════════════════════════
 //  STATS PÓS-PARTIDA
 // ═══════════════════════════════════════════
-let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+// killsByType moved to top
 
 function showPostGame() {
   saveRun();
