@@ -1,6 +1,17 @@
 # Reino do Chicletão 🍬
 
-![Gameplay](boss-screenshot.png)
+## Screenshots
+
+### Gameplay — Combo x9 e conquista desbloqueada
+![Gameplay](screenshot-gameplay.png)
+
+### Tela pós-partida — Stats, histórico e conquistas
+![Pós-partida](screenshot-postgame.png)
+
+### Boss
+![Boss](boss-screenshot.png)
+
+---
 
 ## Descrição
 
@@ -27,7 +38,7 @@ Abra o arquivo `Jogo.html` em um navegador moderno (Chrome/Edge/Firefox) com zoo
 | Fazer upgrade de tropa | Clique na célula com a mesma carta |
 | Iniciar wave | Botão **Invocar Horda** |
 | Pausar | **P** ou **Espaço** |
-| Resetar velocidade | **Ctrl+0** (zoom 100%) |
+| Resetar zoom | **Ctrl+0** |
 
 ---
 
@@ -63,8 +74,9 @@ Abra o arquivo `Jogo.html` em um navegador moderno (Chrome/Edge/Firefox) com zoo
 - **Loja** — aparece a cada 3 waves para comprar itens com goma
 - **Upgrades pós-wave** — escolha 1 de 3 power-ups ao fim de cada wave
 - **Eventos especiais** — Horda Dupla, Horda Veloz, Curador em campo
-- **Conquistas** — 12 conquistas salvas localmente
+- **Conquistas** — 12 conquistas salvas localmente com toast animado
 - **Histórico** — últimas 5 partidas salvas com wave, score e kills
+- **Dificuldades** — Fácil, Normal e Difícil selecionáveis no menu
 
 ---
 
@@ -78,15 +90,17 @@ Use os botões **1× 2× 3×** na arena para acelerar o jogo.
 
 ```
 chico-cletus_game-main/
-├── Jogo.html           — estrutura HTML da página
-├── script.js           — lógica completa do jogo
-├── style.css           — estilos e animações
+├── Jogo.html               — estrutura HTML da página
+├── script.js               — lógica completa do jogo
+├── style.css               — estilos e animações
 ├── chicleteMascador.png
 ├── chicleteAcido.png
 ├── chicleteTanque.png
 ├── Franqueiro.png
 ├── sprites.jpg
 ├── boss-screenshot.png
+├── screenshot-gameplay.png
+├── screenshot-postgame.png
 └── README.md
 ```
 
