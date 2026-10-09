@@ -15,7 +15,38 @@ let handDirty=true;
 let autoWaveTimer=null, awStartTime=0;
 const AW_DELAY = 4000;
 let totalKills=0, score=0, gameStarted=false;
+
+// localStorage pode lançar exceção (modo privado, dados corrompidos) — nunca derrubar o jogo por isso
+function lsGet(k,def){ try{ const v=localStorage.getItem(k); return v===null?def:v; }catch(e){ return def; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function lsJSON(k,def){ try{ const v=JSON.parse(lsGet(k,'null')); return v===null||v===undefined?def:v; }catch(e){ return def; } }
+function getHSScore(){ return parseInt(lsGet('chicletao_hs_score','0'),10)||0; }
+function esc(t){ return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 let killsByType = { normal:0, tank:0, fast:0, boss:0, healer:0, runner:0, armored:0 };
+
+// ═══════════════════════════════════════════
+//  BALANCEAMENTO — todos os números das waves ficam aqui.
+//  Para testar mudanças sem jogar na mão:  node tools/simulate.js
+// ═══════════════════════════════════════════
+const BALANCE = {
+  // nº de inimigos = base + wave×linear + wave²×quad   (depois × difficulty.count)
+  enemyCount: { base:3, linear:1.8, quad:0.25 },
+  // HP base = base + wave×perWave + wave²×quad   (depois × difficulty.hp; tank/boss/runner são multiplicadores)
+  hp:    { base:100, perWave:18, quad:1.5, tank:3.0, boss:7.0, runner:0.7 },
+  // dano = tipo×difficulty.dmg + floor(wave×perWave); boss = ×bossMult
+  dmg:   { normal:6, tank:12, fast:5, healer:2, runner:8, armored:7, perWave:0.9, bossMult:2.0 },
+  // velocidade em px/frame (acima de ~3 fica difícil de ver)
+  speed: { normal:1.1, perWave:0.038, fastBase:2.1, fastPerWave:0.055, tank:0.5, boss:0.6, healer:0.75,
+           runnerBase:1.4, runnerPerWave:0.04, armoredMult:0.9 },
+  spawnIntervalMs: 180,
+  difficulty: {
+    // Ajustados com o simulador (tools/simulate.js). Antes: Fácil 0.6/0.6/0.75/0.7 (bots passavam da wave 35)
+    // e Difícil 1.4/1.4/1.25/1.35 (todos os bots morriam na wave 1).
+    easy:   { hp:.8,   dmg:.8,   spd:.9,   count:.85 },
+    normal: { hp:1,    dmg:1,    spd:1,    count:1   },
+    hard:   { hp:1.12, dmg:1.12, spd:1.06, count:1.1 },
+  },
+};
 
 const ACHIEVEMENTS = [
   { id:'first_wave',   title:'Primeira Onda',      desc:'Complete a wave 1',                icon:'🌊', check:()=>wave>1 },
@@ -25,7 +56,7 @@ const ACHIEVEMENTS = [
   { id:'kills_500',    title:'Exterminador',        desc:'Elimine 500 inimigos',             icon:'☠️', check:()=>totalKills>=500 },
   { id:'first_legend', title:'Rei da Bala',         desc:'Coloque um lendário no grid',      icon:'🍮', check:()=>units.some(u=>u&&u.id==='lenda') },
   { id:'full_grid',    title:'Grid Completo',       desc:'Preencha todas as 25 células',     icon:'🟥', check:()=>units.filter(u=>u).length===25 },
-  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>totalKills>0&&wave>5 },
+  { id:'first_boss',   title:'Caçador de Chefes',  desc:'Derrote seu primeiro boss',        icon:'👹', check:()=>killsByType.boss>0 },
   { id:'combo_5',      title:'Combo Master',        desc:'Alcance combo x5',                 icon:'🔥', check:()=>comboCount>=5 },
   { id:'score_1k',     title:'Mil Pontos',          desc:'Alcance 1.000 de score',           icon:'⭐', check:()=>score>=1000 },
   { id:'score_10k',    title:'Dez Mil',             desc:'Alcance 10.000 de score',          icon:'🌟', check:()=>score>=10000 },
@@ -39,38 +70,75 @@ const SHOP_ITEMS = [
   { id:'goma',     name:'Reservatório',    desc:'+8 goma máxima',                  cost:4,  icon:'💧', fn:()=>{ gomaMax+=8; notify('💧 Goma max +8!'); } },
   { id:'shield',   name:'Escudo Real',     desc:'+20 HP máximo do Rei',            cost:5,  icon:'🛡', fn:()=>{ rei.maxHp+=20; rei.hp=Math.min(rei.hp+20,rei.maxHp); notify('🛡 +20 HP máx!'); } },
   { id:'upgrade',  name:'Elixir de Força', desc:'Sobe 1 nível numa tropa aleatória',cost:6, icon:'🌟', fn:()=>{
-    const alive=units.filter(u=>u&&(u.lvl||1)<3);
-    if(alive.length){ const u=alive[Math.floor(Math.random()*alive.length)]; u.lvl=Math.min(3,(u.lvl||1)+1);
-      const base=DECK.find(c=>c.id===u.id);
-      if(base){const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};const m=LVL[u.lvl];u.maxHp=Math.round(base.hp*m.hp);u.hp=u.maxHp;u.dmg=Math.round(base.dmg*m.dmg);}
-      renderUnitEl(u.row*COLS+u.col); notify('🌟 Tropa nível '+u.lvl+'!'); }
-    else notify('Nenhuma tropa para upar!');
+    const u=levelUpRandomUnit();
+    notify(u?'🌟 Tropa nível '+u.lvl+'!':'Nenhuma tropa para upar!');
   }},
 ];
 
+const LVL_MULT={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};
+function applyLevel(u) {
+  const base=DECK.find(c=>c.id===u.id); if(!base) return;
+  const m=LVL_MULT[u.lvl]; u.maxHp=Math.round(base.hp*m.hp); u.hp=u.maxHp; u.dmg=Math.round(base.dmg*m.dmg);
+}
+// Sobe 1 nível numa tropa aleatória abaixo do nível 3. Retorna a tropa (ou null).
+function levelUpRandomUnit() {
+  const cand=units.filter(u=>u&&(u.lvl||1)<3); if(!cand.length) return null;
+  const u=cand[Math.floor(Math.random()*cand.length)];
+  u.lvl=Math.min(3,(u.lvl||1)+1); applyLevel(u); renderUnitEl(u.row*COLS+u.col); return u;
+}
+function refreshAllUnits() { units.forEach((u,i)=>{ if(u) renderUnitEl(i); }); }
+
 let difficulty='normal'; // 'easy' | 'normal' | 'hard'
 let gameSpeed=1, paused=false;
-let comboCount=0, comboTimer=null;
+let comboCount=0, comboLeft=0;   // comboLeft em ms de jogo (respeita pausa e velocidade)
 let lastTime=0, regenAcc=0, targetUpdateTimer=0;
 let targetedCells = new Set();
 
 // ═══════════════════════════════════════════
 //  DOM REFS
 // ═══════════════════════════════════════════
-const arena    = document.getElementById('arena');
+const arenaOuter = document.getElementById('arena');   // área visível (recebe o tremor de tela)
+const arena      = document.getElementById('stage');   // palco 960×540 escalado: tudo do jogo vive aqui
+const STAGE_W = 960, STAGE_H = 540;
 const gridEl   = document.getElementById('grid');
 const reiEl    = document.getElementById('rei-el');
 const reiHPBar = document.getElementById('rei-hpbar');
 
-function arenaRect() { return arena.getBoundingClientRect(); }
-function cellCenter(col,row) {
-  const gr=gridEl.getBoundingClientRect(), ar=arenaRect();
-  return { x: gr.left-ar.left+col*CELL+CELL/2, y: gr.top-ar.top+row*CELL+CELL/2 };
+// Escala o palco inteiro para caber na área visível (mantém proporção).
+function fitStage() {
+  const w=arenaOuter.clientWidth, h=arenaOuter.clientHeight; if(!w||!h) return;
+  const s=Math.min(2, w/STAGE_W, h/STAGE_H);
+  arena.style.transform='translate(-50%,-50%) scale('+s+')';
 }
-function reiCenter() {
-  const r=reiEl.getBoundingClientRect(), ar=arenaRect();
-  return { x: r.left-ar.left+r.width/2, y: r.top-ar.top+r.height/2 };
+window.addEventListener('resize', fitStage);
+window.addEventListener('orientationchange', fitStage);
+if (window.ResizeObserver) new ResizeObserver(fitStage).observe(arenaOuter);
+fitStage();
+
+// Todas as coordenadas do jogo são do PALCO (px lógicos). offsetLeft/Top ignoram o scale do CSS,
+// então não dependem do tamanho da janela — e ainda evitam getBoundingClientRect (reflow).
+function offsetInStage(el) {
+  let x=0, y=0;
+  while (el && el!==arena) { x+=el.offsetLeft; y+=el.offsetTop; el=el.offsetParent; }
+  return { x, y };
 }
+function gridBox() {
+  const o=offsetInStage(gridEl);
+  return { left:o.x, top:o.y, width:gridEl.offsetWidth, height:gridEl.offsetHeight };
+}
+
+// Posições das células e do Rei ficam em cache (recalculadas ao iniciar o jogo e cada wave).
+let _cellCenters=null, _reiCenter=null;
+function computeCellCenters() {
+  const o=offsetInStage(gridEl), bx=o.x+gridEl.clientLeft, by=o.y+gridEl.clientTop;
+  _cellCenters=[];
+  for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++)
+    _cellCenters.push({ x: bx+c*CELL+CELL/2, y: by+r*CELL+CELL/2 });
+  const ro=offsetInStage(reiEl);
+  _reiCenter={ x: ro.x+reiEl.offsetWidth/2, y: ro.y+reiEl.offsetHeight/2 };
+}
+function cellCenter(col,row) { if(!_cellCenters) computeCellCenters(); return _cellCenters[row*COLS+col]; }
+function reiCenter()         { if(!_reiCenter)   computeCellCenters(); return _reiCenter; }
 
 // ═══════════════════════════════════════════
 //  ÁUDIO
@@ -124,6 +192,8 @@ const PASSIVES = {
   lenda:    { tag:'👑 Lendário',     desc:'Ignora sinergias (já é top)' },
   mascador: { tag:'💚 Aura de regen',  desc:'Regenera HP das tropas vizinhas' },
 };
+// Cada Chiclete Turbo = cooldown ×0.8 (= +25% de velocidade de ataque), mínimo 180ms
+function unitCd(u) { return Math.max(180, u.spd*16*Math.pow(0.8, upgrades.spd)); }
 function hasTaunt() { return units.some(u=>u&&u.id==='tanque'); }
 
 // ═══════════════════════════════════════════
@@ -153,13 +223,13 @@ function spawnParticles(x, y, color, count=6) {
 //  HIGH SCORE
 // ═══════════════════════════════════════════
 const HS_KEY = 'chicletao_hs';
-function getHS() { return parseInt(localStorage.getItem(HS_KEY)||'0',10); }
-function setHS(v) { localStorage.setItem(HS_KEY,v); }
+function getHS() { return parseInt(lsGet(HS_KEY,'0'),10)||0; }
+function setHS(v) { lsSet(HS_KEY,v); }
 document.getElementById('hs-val').textContent = getHS();
 (function() {
   const hs = getHS();
   const el = document.getElementById('title-hs');
-  const hsScore = parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
+  const hsScore = getHSScore();
   if (el) el.textContent = hs > 0 ? '🏆 Wave '+hs+(hsScore>0?' · '+hsScore.toLocaleString('pt-BR')+' pts':'') : '';
 })();
 
@@ -171,7 +241,14 @@ document.getElementById('btn-start').addEventListener('click', function() {
   if (!gameStarted) {
     gameStarted = true;
     for (let i=0; i<6; i++) hand.push(pickCard());
+    // Mão inicial justa: garante pelo menos 3 tropas (antes dava para abrir só com cartas de utilidade e morrer na wave 1)
+    for (let i=0; i<hand.length && hand.filter(c=>c.type==='unit').length<3; i++) {
+      if (hand[i].type==='unit') continue;
+      let c; do { c=pickCard(); } while (c.type!=='unit');
+      hand[i]=c;
+    }
     handDirty = true;
+    tip('start');
   }
 });
 
@@ -197,7 +274,12 @@ function togglePause() {
   else        { if(btn) btn.textContent='⏸ Pausa';  if(ov) ov.style.display='none'; }
 }
 document.addEventListener('keydown', e => {
-  if (e.key==='p'||e.key==='P'||e.key===' ') { e.preventDefault(); togglePause(); }
+  if (e.key==='p'||e.key==='P'||e.key===' ') { e.preventDefault(); togglePause(); return; }
+  if (!gameStarted || paused) return;
+  if (e.key==='Enter' && state==='prep') { e.preventDefault(); startWave(); return; }
+  if (/^[0-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    selectCard(e.key==='0'?9:Number(e.key)-1);   // 1–9 = cartas 1–9, 0 = carta 10
+  }
 });
 
 // ═══════════════════════════════════════════
@@ -205,11 +287,9 @@ document.addEventListener('keydown', e => {
 // ═══════════════════════════════════════════
 function registerKill() {
   totalKills++;
-  checkAchievements();
   score += wave * 10 * (comboCount >= 3 ? 2 : 1);
   const sel = document.getElementById('hv-score'); if(sel) sel.innerText = score;
-  comboCount++;
-  clearTimeout(comboTimer);
+  comboCount++; comboLeft=2000;
   if (comboCount >= 3) {
     const rc = reiCenter();
     const el = document.createElement('div');
@@ -221,17 +301,17 @@ function registerKill() {
     setTimeout(()=>el.remove(), 750);
     sfxCombo();
   }
-  comboTimer = setTimeout(()=>{ comboCount=0; }, 2000);
+  checkAchievements();   // depois de atualizar combo/score, para as conquistas não atrasarem 1 kill
 }
 
 // ═══════════════════════════════════════════
 //  DECK
 // ═══════════════════════════════════════════
 const DECK = [
-  {id:'mascador', name:'Mascador',      icon:'./chicleteMascador.png', emoji:null,  desc:'Soldado fiel do Rei',           cost:2, type:'unit',     hp:75,  dmg:14, spd:46, color:'#ff88bb', rarity:'common',  weight:9},
-  {id:'acido',    name:'Chicle Ácido',  icon:'./chicleteAcido.png',   emoji:'🍋',  desc:'Rápido, pouca resistência',     cost:2, type:'unit',     hp:40,  dmg:11, spd:22, color:'#aadd22', rarity:'common',  weight:9},
-  {id:'tanque',   name:'Blocão',        icon:'./chicleteTanque.png',  emoji:null,  desc:'Parede viva de chiclete',       cost:4, type:'unit',     hp:500, dmg:12, spd:60, color:'#ff44aa', rarity:'rare',    weight:7},
-  {id:'atirador', name:'Franqueiro',    icon:'./Franqueiro.png',              emoji:'🎯',  desc:'Alto dano, vida baixa',         cost:3, type:'unit',     hp:52,  dmg:32, spd:75, color:'#cc8844', rarity:'rare',    weight:6},
+  {id:'mascador', name:'Mascador',      icon:'./assets/chicleteMascador.webp', emoji:null,  desc:'Soldado fiel do Rei',           cost:2, type:'unit',     hp:75,  dmg:14, spd:46, color:'#ff88bb', rarity:'common',  weight:9},
+  {id:'acido',    name:'Chicle Ácido',  icon:'./assets/chicleteAcido.webp',   emoji:'🍋',  desc:'Rápido, pouca resistência',     cost:2, type:'unit',     hp:40,  dmg:11, spd:22, color:'#aadd22', rarity:'common',  weight:9},
+  {id:'tanque',   name:'Blocão',        icon:'./assets/chicleteTanque.webp',  emoji:null,  desc:'Parede viva de chiclete',       cost:4, type:'unit',     hp:500, dmg:12, spd:60, color:'#ff44aa', rarity:'rare',    weight:7},
+  {id:'atirador', name:'Franqueiro',    icon:'./assets/Franqueiro.webp',              emoji:'🎯',  desc:'Alto dano, vida baixa',         cost:3, type:'unit',     hp:52,  dmg:32, spd:75, color:'#cc8844', rarity:'rare',    weight:6},
   {id:'duplo',    name:'Par de Goma',   icon:null,                            emoji:'🍡',  desc:'Equilibrado e barato',          cost:2, type:'unit',     hp:60,  dmg:13, spd:44, color:'#ff66cc', rarity:'common',  weight:9},
   {id:'lenda',    name:'Rei da Bala',   icon:null,                            emoji:'🍮',  desc:'Lendário. Ponto final.',        cost:4, type:'unit',     hp:250, dmg:42, spd:60, color:'#ffd700', rarity:'legend',  weight:2},
   {id:'sticky',   name:'Goma Grudenta', icon:null,                            emoji:'🟤',  desc:'Gosma que lentifica inimigos',  cost:5, type:'unit',     hp:78,  dmg:16, spd:80, color:'#aa6633', rarity:'rare',    weight:5},
@@ -287,7 +367,7 @@ function showCellPreview(idx) {
   const eu = units[idx];
   if (eu && eu.id===card.id) {
     lvl = Math.min(3,(eu.lvl||1)+1);
-    const m = {1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}}[lvl];
+    const m = LVL_MULT[lvl];
     dmg=Math.round(card.dmg*m.dmg); hp=Math.round(card.hp*m.hp);
   }
   const syn=synergy(), cell=getCellEl(idx), el=document.createElement('div');
@@ -324,6 +404,7 @@ function refreshGrid() {
     if (wasTargeted) cell.classList.add('targeted');
     if (!card || state!=='prep') continue;
     if (!units[i]&&!buildings[i]&&(card.type==='unit'||card.type==='building')) cell.classList.add('highlight');
+    if (units[i]&&card.type==='sacrifice') cell.classList.add('highlight');
     if (units[i]&&card.type==='unit'&&units[i].id===card.id&&(units[i].lvl||1)<3) cell.classList.add('upgradable');
     if (buildings[i]&&card.type==='building'&&buildings[i].id===card.id&&(buildings[i].lvl||1)<3) cell.classList.add('upgradable');
   }
@@ -364,7 +445,7 @@ function renderUnitEl(idx) {
     el.appendChild(hw);
     // DPS indicator
     const dpsEl=document.createElement('div'); dpsEl.className='unit-dps';
-    const syn=synergy(), cd=Math.max(180,u.spd*16-upgrades.spd*12);
+    const syn=synergy(), cd=unitCd(u);
     dpsEl.textContent = '⚔️'+Math.round((u.dmg+upgrades.dmg+syn)/(cd/1000))+'/s';
     el.appendChild(dpsEl);
     u.el=el; cell.appendChild(el);
@@ -389,7 +470,8 @@ function fabBonus() {
 // ═══════════════════════════════════════════
 function checkAutoWave() {
   if (state!=='prep') return;
-  if (hand.length<=2) {
+  // só dispara com a mão quase vazia E sem nenhuma carta que dê para pagar (antes disparava mesmo com goma sobrando)
+  if (hand.length<=2 && !hand.some(c=>c.cost<=goma)) {
     if (!autoWaveTimer) {
       awStartTime = performance.now();
       document.getElementById('auto-wave').style.display = 'block';
@@ -438,11 +520,10 @@ function renderHand() {
     div.innerHTML = '<div class="cc">'+c.cost+'</div>'+cardIconHTML(c)
       +'<div class="cn">'+c.name+'</div>'+statsHTML+passHTML
       +'<div class="cd">'+c.desc+'</div><div class="cbar r-'+c.rarity+'"></div>';
-    div.addEventListener('pointerdown', ev => {
-      ev.stopPropagation(); if(state!=='prep') return;
-      if (!ok) { sfxError(); return; }
-      sel=(sel===i?null:i); handDirty=true; refreshGrid(); hideCellPreview();
-    });
+    div.setAttribute('role','button'); div.setAttribute('tabindex','0');
+    div.setAttribute('aria-label', c.name+', custo '+c.cost+(ok?'':' (goma insuficiente)')+' — tecla '+(i===9?0:i+1));
+    div.addEventListener('pointerdown', ev => { ev.stopPropagation(); selectCard(i); });
+    div.addEventListener('keydown', ev => { if (ev.key==='Enter') { ev.preventDefault(); ev.stopPropagation(); selectCard(i); } });
     el.appendChild(div);
   });
   refreshGrid();
@@ -466,6 +547,28 @@ function updateHUD() {
   if (totalWave>0)
     document.getElementById('bfwave').style.width = Math.max(0,(1-(spawnQueue.length+enemies.length)/totalWave)*100)+'%';
   const killEl = document.getElementById('hv-kills'); if(killEl) killEl.innerText=totalKills;
+  // alerta visual: borda vermelha pulsando quando o Rei está com menos de 30% de HP
+  arenaOuter.classList.toggle('danger', rei.hp>0 && rei.hp/rei.maxHp<.3 && state==='battle');
+  // prévia da próxima wave (só no preparo)
+  const pv = state==='prep' && gameStarted ? wavePreviewText() : '';
+  if (pv!==_lastPreview) { _lastPreview=pv; const pe=document.getElementById('wave-preview'); if(pe) pe.innerText=pv; }
+}
+let _lastPreview='';
+
+// DICAS DA PRIMEIRA PARTIDA — aparecem uma vez cada (salvas no localStorage), sem bloquear o jogo
+const TIPS = {
+  start:  '👆 Escolha uma carta da mão e clique numa célula do grid para posicionar a tropa',
+  placed: '⬆️ Cartas iguais sobem de nível (até 3): selecione a carta e clique na tropa igual',
+  wave:   '⌨️ Atalhos: 1–9 escolhem cartas · Enter invoca a horda · P pausa',
+};
+const tipsSeen = new Set((()=>{ const a=lsJSON('chicletao_tips',[]); return Array.isArray(a)?a:[]; })());
+let tipT=null;
+function tip(key) {
+  if (tipsSeen.has(key) || !TIPS[key]) return;
+  tipsSeen.add(key); lsSet('chicletao_tips', JSON.stringify([...tipsSeen]));
+  const el=document.getElementById('tip'); if(!el) return;
+  el.innerText=TIPS[key]; el.style.opacity='1';
+  clearTimeout(tipT); tipT=setTimeout(()=>el.style.opacity='0', 6000);
 }
 
 let notifT=null;
@@ -493,8 +596,8 @@ function spawnFloat(x,y,txt,color='#ff4466') {
 }
 let shakeTimer=null;
 function shakeScreen() {
-  arena.classList.remove('shake'); void arena.offsetWidth; arena.classList.add('shake');
-  clearTimeout(shakeTimer); shakeTimer=setTimeout(()=>arena.classList.remove('shake'),300);
+  arenaOuter.classList.remove('shake'); void arenaOuter.offsetWidth; arenaOuter.classList.add('shake');
+  clearTimeout(shakeTimer); shakeTimer=setTimeout(()=>arenaOuter.classList.remove('shake'),300);
 }
 
 // ═══════════════════════════════════════════
@@ -542,6 +645,18 @@ function onCellClick(idx) {
   if (state!=='prep' || sel===null) return;
   const card=hand[sel], col=idx%COLS, row=Math.floor(idx/COLS);
 
+  // Derretimento: o jogador ESCOLHE qual tropa sacrificar (antes sacrificava sempre a primeira do grid)
+  if (card.type==='sacrifice') {
+    if (!units[idx])    { notify('🔥 Clique numa tropa para sacrificar'); sfxError(); return; }
+    if (goma<card.cost) { notify('🍬 Goma insuficiente!'); sfxError(); return; }
+    goma-=card.cost;
+    const ac=cellCenter(col,row);
+    spawnFloat(ac.x,ac.y-16,'💥 Sacrificado!','#ff4444');
+    units[idx]=null; renderUnitEl(idx);
+    for (let i=0;i<3;i++) drawCard();
+    notify('🔥 Sacrifício! +3 cartas'); sfxPlace(); consume(); return;
+  }
+
   // upgrade unidade
   if (units[idx] && card.type==='unit') {
     const u=units[idx];
@@ -549,9 +664,7 @@ function onCellClick(idx) {
     if ((u.lvl||1)>=3)   { notify('⭐ Já no nível máximo!'); sfxError(); return; }
     if (goma<card.cost)  { notify('🍬 Goma insuficiente!'); sfxError(); return; }
     goma-=card.cost; u.lvl=(u.lvl||1)+1;
-    const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};
-    const base=DECK.find(c=>c.id===u.id);
-    if (base) { const m=LVL[u.lvl]; u.maxHp=Math.round(base.hp*m.hp); u.hp=u.maxHp; u.dmg=Math.round(base.dmg*m.dmg); }
+    applyLevel(u);
     renderUnitEl(idx);
     const cc=cellCenter(col,row);
     spawnFloat(cc.x,cc.y-20,'Nv.'+u.lvl+'! ⬆️', u.lvl===3?'#ff44ff':'#ffd700');
@@ -574,29 +687,37 @@ function onCellClick(idx) {
 
   if (card.type==='unit') {
     units[idx]={id:card.id,hp:card.hp,maxHp:card.hp,dmg:card.dmg,spd:card.spd,cd:0,color:card.color,lvl:1,col,row,el:null};
-    renderUnitEl(idx); sfxPlace();
+    renderUnitEl(idx); sfxPlace(); tip('placed');
   }
   if (card.type==='building') {
     buildings[idx]={id:card.id,lvl:1,col,row,el:null}; fabCount++;
     renderUnitEl(idx); sfxPlace(); notify('🏭 Fábrica nv.1! +'+fabBonus()+'/wave');
   }
-  if (card.type==='sacrifice') {
-    const alive=units.findIndex(u=>u);
-    if (alive!==-1) {
-      const ac=cellCenter(units[alive].col,units[alive].row);
-      spawnFloat(ac.x,ac.y-16,'💥 Sacrificado!','#ff4444');
-      units[alive]=null; renderUnitEl(alive);
-      for (let i=0;i<3;i++) drawCard();
-      notify('🔥 Sacrifício! +3 cartas'); sfxPlace();
-    } else { notify('Sem tropas para sacrificar!'); sfxError(); goma+=card.cost; consume(); return; }
-  }
+  consume();
+}
+// Cartas de efeito imediato (cura do Rei, +goma): usadas ao clicar na carta, sem precisar de célula vazia.
+function useInstantCard() {
+  const card=hand[sel]; if(!card) return;
+  if (goma<card.cost) { notify('🍬 Goma insuficiente!'); sfxError(); sel=null; return; }
   if (card.type==='heal') {
-    const h=Math.min(30,rei.maxHp-rei.hp); rei.hp=Math.min(rei.maxHp,rei.hp+30);
+    if (rei.hp>=rei.maxHp) { notify('👑 O Rei já está com HP cheio!'); sfxError(); sel=null; handDirty=true; return; }
+    goma-=card.cost;
+    const h=Math.min(30,rei.maxHp-rei.hp); rei.hp+=h;
     spawnFloat(reiCenter().x,reiCenter().y-30,'+'+Math.round(h)+' HP','#ff88cc');
     notify('🧪 Rei curado! +'+Math.round(h)+' HP'); sfxUpgrade();
+  } else if (card.type==='goma') {
+    if (goma-card.cost>=gomaMax) { notify('🍬 Goma já está cheia!'); sfxError(); sel=null; handDirty=true; return; }
+    goma=Math.min(gomaMax,goma-card.cost+6); notify('💧 +6 Gomas!'); sfxPlace();
   }
-  if (card.type==='goma') { goma=Math.min(gomaMax,goma+6); notify('💧 +6 Gomas!'); sfxPlace(); }
   consume();
+}
+function selectCard(i) {
+  if (!gameStarted || state!=='prep') return;
+  const c=hand[i]; if(!c) return;
+  if (goma<c.cost) { sfxError(); return; }
+  if (c.type==='heal'||c.type==='goma') { sel=i; useInstantCard(); return; }
+  if (c.type==='sacrifice' && !units.some(u=>u)) { notify('Sem tropas para sacrificar!'); sfxError(); return; }
+  sel=(sel===i?null:i); handDirty=true; refreshGrid(); hideCellPreview();
 }
 function consume() { hand.splice(sel,1); sel=null; handDirty=true; checkAutoWave(); }
 
@@ -607,7 +728,7 @@ function startWave() {
   if (state!=='prep') return;
   if (autoWaveTimer) { clearInterval(autoWaveTimer); autoWaveTimer=null; }
   document.getElementById('auto-wave').style.display='none';
-  state='battle';
+  state='battle'; tip('wave');
   document.getElementById('btn-wave').disabled=true;
   const pb=document.getElementById('btn-pause'); if(pb) pb.disabled=false;
   const isBoss=wave%5===0;
@@ -624,69 +745,64 @@ function checkSpecialEvent() {
   else if (wave%4===0 && wave>3) showEvent('💊 CURADOR em campo — mate-o primeiro!');
 }
 
+// Nº de inimigos da wave (usado pelo spawn E pela prévia na tela, para nunca divergirem)
+function waveCount(w) {
+  const B=BALANCE, dm=B.difficulty[difficulty]||B.difficulty.normal;
+  let count = Math.round(B.enemyCount.base + w*B.enemyCount.linear + w*w*B.enemyCount.quad);
+  count = Math.round(count * dm.count);
+  if (w%7===0 && w>1) count = Math.round(count*2);
+  return count;
+}
+function waveEvent(w) {
+  if (w%7===0 && w>1) return '🌊 Horda dupla';
+  if (w%6===0 && w>1) return '💨 Horda veloz';
+  if (w%4===0 && w>3) return '💊 Curador em campo';
+  return '';
+}
+function wavePreviewText() {
+  const tags=[]; if (wave%5===0) tags.push('👹 Boss'); const ev=waveEvent(wave); if (ev) tags.push(ev);
+  return 'Wave '+wave+' · '+waveCount(wave)+' inimigos'+(tags.length?' · '+tags.join(' · '):'');
+}
+
 function buildSpawn() {
-  // ── BALANCEAMENTO ─────────────────────────────────────────
-  // Fórmula: BASE + wave×LINEAR + wave²×QUAD
-  //   wave 1→8 | wave 5→17 | wave 10→29 | wave 20→53
-  // Para FÁCIL  → 2 / 1.0 / 0.10
-  // Para MÉDIO  → 3 / 1.3 / 0.15
-  const BASE_INIMIGOS=3, MULTI_LINEAR=1.8, MULTI_QUAD=0.25;
-  let count = Math.round(BASE_INIMIGOS + wave*MULTI_LINEAR + wave*wave*MULTI_QUAD);
-
-
-// Multiplicadores de dificuldade
-const DIFF = { easy:{hp:.6,dmg:.6,spd:.75,count:.7}, normal:{hp:1,dmg:1,spd:1,count:1}, hard:{hp:1.4,dmg:1.4,spd:1.25,count:1.35} };
-const dm = DIFF[difficulty]||DIFF.normal;
-
-  const isDoubleHorde = wave%7===0 && wave>1;
+  computeCellCenters();   // layout pode ter mudado desde a última wave
+  const B=BALANCE, dm=B.difficulty[difficulty]||B.difficulty.normal;
+  // Nº de inimigos (com os valores atuais: wave 1→5 | 5→18 | 10→46 | 20→139 no Normal)
+  const count = waveCount(wave);
   const isAllFast     = wave%6===0 && wave>1;
   const forceHealer   = wave%4===0 && wave>3;
-  count = Math.round(count * dm.count);
-  if (isDoubleHorde) count = Math.round(count*2);
 
   totalWave=count; spawnQueue=[]; spawnClock=0;
-  const gr=gridEl.getBoundingClientRect(), ar=arenaRect();
-  const gridTop=gr.top-ar.top, gridH=gr.height;
+  const gr=gridBox(), ar={ left:0, width:STAGE_W, height:STAGE_H };
+  const gridTop=gr.top, gridH=gr.height;
 
   for (let i=0; i<count; i++) {
     const r=Math.random();
     const isBoss   = wave%5===0 && i===0;
     const isHealer = forceHealer && i===1 && !isBoss;
-    // Corredor: aparece a partir da wave 6, 12% de chance — ignora tropas, vai direto no Rei
+    // Corredor: wave 6+, 12% de chance — ignora tropas, vai direto no Rei
     const isRunner  = !isBoss && !isHealer && r>0.55 && r<=0.67 && wave>=6;
-    // Armado: wave 8+, 10% chance — 1 hit quebra escudo, depois morre normal
+    // Armado: wave 8+, 10% de chance — 1 hit quebra o escudo, depois morre normal
     const isArmored = !isBoss && !isHealer && !isRunner && r>0.45 && r<=0.55 && wave>=8;
     const isTank   = !isBoss && !isHealer && !isRunner && !isArmored && r<0.22 && wave>1 && !isAllFast;
     const isFast   = !isBoss && !isHealer && !isRunner && !isArmored && !isTank && (isAllFast||(r>0.72&&wave>=3));
 
-    // HP BASE — wave 1=100hp | wave 5=220hp | wave 10=440hp
-    // Para FÁCIL → HP_BASE=55, HP_POR_WAVE=10, HP_QUAD=0.5
-    const HP_BASE=100, HP_POR_WAVE=18, HP_QUAD=1.5;
-    const baseHp = (HP_BASE + wave*HP_POR_WAVE + wave*wave*HP_QUAD) * dm.hp;
+    const baseHp = (B.hp.base + wave*B.hp.perWave + wave*wave*B.hp.quad) * dm.hp;
+    const dmgType = isTank?B.dmg.tank : isFast?B.dmg.fast : isHealer?B.dmg.healer : isRunner?B.dmg.runner : isArmored?B.dmg.armored : B.dmg.normal;
+    const dmgBase = ((dmgType*dm.dmg)|0) + Math.floor(wave*B.dmg.perWave);
+    const hp = isBoss?baseHp*B.hp.boss : isTank?baseHp*B.hp.tank : isRunner?baseHp*B.hp.runner : baseHp;
 
-    // DANO BASE
-    // Para FÁCIL → DMG_BASE_NORMAL=4, DMG_POR_WAVE=0.5
-    const DMG_BASE_NORMAL=6, DMG_BASE_TANK=12, DMG_BASE_FAST=5, DMG_BASE_HEALER=2, DMG_BASE_RUNNER=8, DMG_BASE_ARMORED=7, DMG_POR_WAVE=0.9;
-    const dmgBase = ((isTank?DMG_BASE_TANK:isFast?DMG_BASE_FAST:isHealer?DMG_BASE_HEALER:isRunner?DMG_BASE_RUNNER:isArmored?DMG_BASE_ARMORED:DMG_BASE_NORMAL)*dm.dmg|0)
-                    + Math.floor(wave*DMG_POR_WAVE);
-
-    const HP_TANK_MULT=3.0, HP_BOSS_MULT=7.0;
-    const hp = isBoss?baseHp*HP_BOSS_MULT : isTank?baseHp*HP_TANK_MULT : isRunner?baseHp*0.7 : baseHp;
-
-    // VELOCIDADE — acima de 3.0 fica difícil de ver
-    // Para FÁCIL → SPD_NORMAL=0.7, SPD_POR_WAVE=0.018
-    const SPD_NORMAL=1.1, SPD_POR_WAVE=0.038, SPD_FAST_BASE=2.1, SPD_FAST_WAVE=0.055, SPD_TANK=0.5, SPD_BOSS=0.6, SPD_HEALER=0.75;
-    const speed = (isBoss?SPD_BOSS : isTank?SPD_TANK : isFast?(SPD_FAST_BASE+wave*SPD_FAST_WAVE) : isHealer?SPD_HEALER : isRunner?(1.4+wave*0.04) : isArmored?(SPD_NORMAL*0.9+wave*SPD_POR_WAVE) : (SPD_NORMAL+wave*SPD_POR_WAVE)) * dm.spd;
-
-    // INTERVALO — FÁCIL→350ms | MÉDIO→280ms | DIFÍCIL→180ms
-    const SPAWN_INTERVALO = 180;
+    const S=B.speed;
+    const speed = (isBoss?S.boss : isTank?S.tank : isFast?(S.fastBase+wave*S.fastPerWave) : isHealer?S.healer
+                  : isRunner?(S.runnerBase+wave*S.runnerPerWave) : isArmored?(S.normal*S.armoredMult+wave*S.perWave)
+                  : (S.normal+wave*S.perWave)) * dm.spd;
 
     spawnQueue.push({
-      delay:   i*SPAWN_INTERVALO, spawned:false,
-      x:       (wave>=10 && i%5===0) ? (ar.left-ar.left + gridEl.getBoundingClientRect().left - ar.left + Math.random()*gridEl.getBoundingClientRect().width) : ar.width+60+Math.random()*100,
+      delay:   i*B.spawnIntervalMs, spawned:false,
+      x:       (wave>=10 && i%5===0) ? (gr.left-ar.left + Math.random()*gr.width) : ar.width+60+Math.random()*100,
       y:       (wave>=10 && i%5===0) ? (i%10===0 ? -40 : ar.height+40) : gridTop+15+Math.random()*(gridH-30),
       hp, maxHp:hp, speed,
-      dmg:     isBoss?Math.round(dmgBase*2.0):dmgBase,
+      dmg:     isBoss?Math.round(dmgBase*B.dmg.bossMult):dmgBase,
       healPower: isHealer?Math.round(8+wave*0.8):0,
       attackCd: 0,
       type:    isBoss?'boss':isTank?'tank':isFast?'fast':isHealer?'healer':isRunner?'runner':isArmored?'armored':'normal',
@@ -704,41 +820,31 @@ function showUpgrades() {
   const pb=document.getElementById('btn-pause'); if(pb) pb.disabled=true;
   const pool = [
     {icon:'⚔️',title:'Goma Afiada',      desc:'+8 dano para todas as tropas',      fn:()=>upgrades.dmg+=8},
-    {icon:'⚡',title:'Chiclete Turbo',    desc:'Tropas atacam +25% mais rápido',    fn:()=>upgrades.spd+=9},
+    {icon:'⚡',title:'Chiclete Turbo',    desc:'Tropas atacam +25% mais rápido',    fn:()=>upgrades.spd+=1},
     {icon:'💧',title:'+6 Goma/wave',      desc:'Mais goma ao fim de cada wave',     fn:()=>upgrades.gomaWave+=6},
     {icon:'🏭',title:'Fábrica ++',        desc:'Cada fábrica sobe 1 nível',
+      ok:()=>buildings.some(b=>b&&b.id==='fab'&&(b.lvl||1)<3),
       fn:()=>{buildings.forEach(b=>{if(b&&b.id==='fab'){b.lvl=Math.min(3,(b.lvl||1)+1);renderUnitEl(b.row*5+b.col);}});notify('🏭 Fábricas turbinadas!');}},
     {icon:'❤️',title:'Rei Blindado',      desc:'+35 HP máximo para o Rei',          fn:()=>{rei.maxHp+=35;rei.hp=Math.min(rei.hp+35,rei.maxHp);}},
     {icon:'🔄',title:'Regen de Chiclete', desc:'Rei recupera 2 HP/s',              fn:()=>upgrades.regen+=2},
-    {icon:'🃏',title:'Mais Cartas',       desc:'Ganhe 4 cartas agora',              fn:()=>{for(let i=0;i<4;i++)drawCard();}},
+    {icon:'🃏',title:'Mais Cartas',       desc:'Ganhe 4 cartas agora',              ok:()=>hand.length<=7, fn:()=>{for(let i=0;i<4;i++)drawCard();}},
     {icon:'💥',title:'Explosão de Goma',  desc:'+14 dano para todas as tropas',     fn:()=>upgrades.dmg+=14},
     {icon:'🫧',title:'Reserva de Goma',   desc:'Goma máxima +12',                   fn:()=>gomaMax+=12},
     {icon:'✌️',title:'Sinergias x2',      desc:'Bônus de sinergias dobrado',        fn:()=>upgrades.synx2=true},
     {icon:'🍬',title:'Goma Inicial',      desc:'+4 goma no início de cada preparo', fn:()=>upgrades.gomaWave+=4},
     {icon:'🌟',title:'Upgrade Aleatório', desc:'Sobe 1 nível em uma tropa aleatória em campo',
-      fn:()=>{
-        const alive=units.filter(u=>u&&(u.lvl||1)<3);
-        if (alive.length) {
-          const u=alive[Math.floor(Math.random()*alive.length)];
-          u.lvl=Math.min(3,(u.lvl||1)+1);
-          const base=DECK.find(c=>c.id===u.id);
-          if (base) {
-            const LVL={1:{hp:1,dmg:1},2:{hp:1.6,dmg:1.5},3:{hp:2.5,dmg:2.2}};
-            const m=LVL[u.lvl]; u.maxHp=Math.round(base.hp*m.hp); u.hp=u.maxHp; u.dmg=Math.round(base.dmg*m.dmg);
-          }
-          renderUnitEl(u.row*COLS+u.col);
-          notify('🌟 '+u.id+' subiu para Nv.'+u.lvl+'!');
-        } else notify('Nenhuma tropa para upar!');
-      }},
+      ok:()=>units.some(u=>u&&(u.lvl||1)<3),
+      fn:()=>{ const u=levelUpRandomUnit(); notify(u?'🌟 '+u.id+' subiu para Nv.'+u.lvl+'!':'Nenhuma tropa para upar!'); }},
   ];
-  const opts=[],used=new Set();
-  while (opts.length<3) { const r=Math.floor(Math.random()*pool.length); if(!used.has(r)){used.add(r);opts.push(pool[r]);} }
+  const avail=pool.filter(o=>!o.ok||o.ok());
+  for (let i=avail.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [avail[i],avail[j]]=[avail[j],avail[i]]; }
+  const opts=avail.slice(0,3);
   const wrap=document.getElementById('ov-up-cards'); wrap.innerHTML='';
   opts.forEach(u => {
     const d=document.createElement('div'); d.className='upc';
     d.innerHTML='<div class="upi">'+u.icon+'</div><div class="upt">'+u.title+'</div><div class="upd">'+u.desc+'</div>';
     d.onclick=()=>{
-      u.fn(); sfxUpgrade();
+      u.fn(); refreshAllUnits(); sfxUpgrade();
       document.getElementById('ov-upgrade').style.display='none';
       const earned=Math.min(6+fabBonus()+upgrades.gomaWave, gomaMax);
       goma=Math.min(gomaMax,goma+earned);
@@ -794,6 +900,9 @@ function loop(ts) {
     });
     spawnQueue=spawnQueue.filter(q=>!q.spawned);
 
+    // COMBO
+    if (comboLeft>0) { comboLeft-=dt; if (comboLeft<=0) { comboLeft=0; comboCount=0; } }
+
     // REGEN REI
     regenAcc+=dt;
     if (regenAcc>=1000) { if(upgrades.regen>0) rei.hp=Math.min(rei.maxHp,rei.hp+upgrades.regen); regenAcc=0; }
@@ -827,7 +936,7 @@ function loop(ts) {
               if (hpEl){const pct=ally.hp/ally.maxHp;hpEl.style.width=pct*100+'%';hpEl.style.background=pct>.5?'#44cc88':pct>.25?'#ffcc00':'#ff2244';}
             }
           });
-          u.cd=Math.max(180,u.spd*16-upgrades.spd*12);
+          u.cd=unitCd(u);
         } else if (u.id==='mascador') {
           // Passiva: regen +3 HP nas tropas vizinhas (célula adjacente)
           const adjacents=[-1,1,-COLS,COLS,-COLS-1,-COLS+1,COLS-1,COLS+1];
@@ -848,7 +957,7 @@ function loop(ts) {
             const p={x:cellCenter(u.col,u.row).x,y:cellCenter(u.col,u.row).y,tgt:t,dmg,color:u.color,spd:5,r:3};
             createProjEl(p); projs.push(p);
           }
-          u.cd=Math.max(180,u.spd*16-upgrades.spd*12);
+          u.cd=unitCd(u);
         } else {
           const t=nearestEnemy(cc.x,cc.y);
           if (t) {
@@ -858,13 +967,14 @@ function loop(ts) {
             const p={x:cc.x,y:cc.y,tgt:t,dmg,color:isCrit?'#ffdd00':u.color,spd:5,r:isCrit?5:3,isCrit};
             createProjEl(p); projs.push(p);
             if (u.id==='sticky') stickyPatches.push({x:t.x,y:t.y,life:5000,r:32,el:null});
-            u.cd=Math.max(180,u.spd*16-upgrades.spd*12);
+            u.cd=unitCd(u);
           }
         }
       }
     });
 
     // INIMIGOS
+    const taunter = units.find(u=>u&&u.id==='tanque') || null;   // 1x por frame, não por inimigo
     enemies.forEach(e=>{
       // RAGE MODE do boss
       if (e.type==='boss' && !e.rageMode && e.hp/e.maxHp<0.4) {
@@ -890,7 +1000,6 @@ function loop(ts) {
       let tgt=null,minD=Infinity;
       // Runner ignora tropas, fast ignora tropas; taunt: tanque é priorizado
       if (e.type!=='fast' && e.type!=='runner') {
-        const taunter = hasTaunt() ? units.find(u=>u&&u.id==='tanque') : null;
         if (taunter) {
           const cc=cellCenter(taunter.col,taunter.row);
           tgt={u:taunter,cc}; minD=dist(e.x,e.y,cc.x,cc.y);
@@ -999,103 +1108,74 @@ function loop(ts) {
       spawnFloat(reiCenter().x, reiCenter().y - 40, '+'+Math.min(wave,8)+' goma bônus!', '#44ddff');
       reiEl.classList.add('celebrate');
       setTimeout(()=>reiEl.classList.remove('celebrate'), 1600);
+      comboCount=0; comboLeft=0;
       wave++;
       if (wave > 2 && wave % 3 === 0) { state='shop'; showShop(); }
       else { state='upgrade'; showUpgrades(); }
     }
     // GAME OVER
     if (rei.hp<=0 && state==='battle') {
-      rei.hp=0;
-      const hs=getHS(), newHS=wave>hs; if(newHS) setHS(wave);
-      const hsScore = parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
-      if(score > hsScore) localStorage.setItem('chicletao_hs_score', score);
-      document.getElementById('go-msg').innerText = 'Você chegou até a wave '+wave;
-      document.getElementById('go-stats').innerText = totalKills+' inimigos eliminados  |  '+score.toLocaleString('pt-BR')+' pts';
-      document.getElementById('go-hs').innerText = newHS?'🏆 Novo recorde! Wave '+wave:'🏆 Recorde: Wave '+hs;
-      sfxBoss(); state='dead';
-      setTimeout(showPostGame, 800);
+      rei.hp=0; sfxBoss(); state='dead';
+      setTimeout(showPostGame, 800);   // recorde é salvo/comparado só em showPostGame
       const pb=document.getElementById('btn-pause'); if(pb) pb.disabled=true;
     }
   }
 
   updateHUD(); renderHand();
-  
-// ═══════════════════════════════════════════
-//  DETECÇÃO DE ZOOM
-// ═══════════════════════════════════════════
-let zoomDismissed = false;
-let zoomPaused    = false;
-
-function getZoom() {
-  // Método mais confiável cross-browser
-  return Math.round(window.devicePixelRatio * 100 / (window.outerWidth / window.innerWidth || 1)) || Math.round(window.devicePixelRatio * 100);
+  requestAnimationFrame(loop);
 }
 
-function checkZoom() {
-  if (zoomDismissed) return;
-  // Usa window.devicePixelRatio comparado ao ratio "natural" da tela
-  // A forma mais simples e cross-browser: compara innerWidth com screen width
-  const zoom = Math.round((window.outerWidth / window.innerWidth) * 100);
-  const ov   = document.getElementById('ov-zoom');
-  const val  = document.getElementById('zoom-val');
-  if (!ov) return;
 
-  // Tolerância de ±5% para evitar falsos positivos por DPI
-  const isZoomed = zoom < 95 || zoom > 105;
+// ═══════════════════════════════════════════
+//  AVISO DE ORIENTAÇÃO
+//  O palco escala sozinho (fitStage), então não precisa mais pedir zoom 100%.
+//  Só sugere girar o celular quando está em pé (a arena fica pequena demais).
+// ═══════════════════════════════════════════
+let orientDismissed = false;
+let orientPaused    = false;
+const portraitMQ = window.matchMedia('(orientation: portrait) and (max-width: 700px)');
 
-  if (isZoomed) {
-    if (val) val.textContent = zoom;
+function checkOrientation() {
+  if (orientDismissed) return;
+  const ov = document.getElementById('ov-zoom'); if (!ov) return;
+  if (portraitMQ.matches) {
     ov.style.display = 'flex';
-    if (!zoomPaused && state === 'battle' && !paused) {
-      paused = true;
-      zoomPaused = true;
-      const btn = document.getElementById('btn-pause');
-      const ovp = document.getElementById('ov-pause');
-      if (btn) btn.textContent = '▶ Resume';
-      // Não mostra overlay de pausa — o de zoom já está visível
+    if (!orientPaused && state === 'battle' && !paused) {
+      paused = true; orientPaused = true;
+      const btn = document.getElementById('btn-pause'); if (btn) btn.textContent = '▶ Resume';
     }
   } else {
     ov.style.display = 'none';
-    if (zoomPaused) {
-      paused = false;
-      zoomPaused = false;
-      const btn = document.getElementById('btn-pause');
-      if (btn) btn.textContent = '⏸ Pausa';
-    }
+    releaseOrientationPause();
   }
 }
-
-function dismissZoom() {
-  zoomDismissed = true;
+function releaseOrientationPause() {
+  if (!orientPaused) return;
+  paused = false; orientPaused = false;
+  const btn = document.getElementById('btn-pause'); if (btn) btn.textContent = '⏸ Pausa';
+}
+function dismissOrientation() {
+  orientDismissed = true;
   document.getElementById('ov-zoom').style.display = 'none';
-  if (zoomPaused) {
-    paused = false;
-    zoomPaused = false;
-    const btn = document.getElementById('btn-pause');
-    if (btn) btn.textContent = '⏸ Pausa';
-  }
+  releaseOrientationPause();
 }
-
-// Checa no resize (zoom muda o innerWidth)
-window.addEventListener('resize', checkZoom);
-// Checa periodicamente (alguns browsers não disparam resize no zoom)
-setInterval(checkZoom, 800);
-// Checa na inicialização
-checkZoom();
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', checkOrientation);
+checkOrientation();
 
 
 // ═══════════════════════════════════════════
 //  CONQUISTAS
 // ═══════════════════════════════════════════
 // ACHIEVEMENTS moved to top
-let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
+let unlockedAchievements = new Set((()=>{ const a=lsJSON('chicletao_ach',[]); return Array.isArray(a)?a:[]; })());
 
 function checkAchievements() {
   ACHIEVEMENTS.forEach(a => {
     if (unlockedAchievements.has(a.id)) return;
     if (a.check()) {
       unlockedAchievements.add(a.id);
-      localStorage.setItem('chicletao_ach', JSON.stringify([...unlockedAchievements]));
+      lsSet('chicletao_ach', JSON.stringify([...unlockedAchievements]));
       showAchievementToast(a);
     }
   });
@@ -1150,7 +1230,7 @@ function showShop() {
       +'<button class="shop-buy'+(canBuy?'':' shop-buy-off')+'" '+(canBuy?'':'disabled')+'>🍬'+item.cost+'</button>';
     if (canBuy) {
       el.querySelector('.shop-buy').addEventListener('click', ()=>{
-        goma -= item.cost; item.fn();
+        goma -= item.cost; item.fn(); refreshAllUnits();
         const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
         showShop(); // refresh
       });
@@ -1169,25 +1249,26 @@ function closeShop() {
 //  HISTÓRICO DE RUNS
 // ═══════════════════════════════════════════
 function saveRun() {
-  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  const runs = lsJSON('chicletao_runs',[]); if(!Array.isArray(runs)) return;
   runs.unshift({ wave, score, kills:totalKills, diff:difficulty, date:new Date().toLocaleDateString('pt-BR') });
-  localStorage.setItem('chicletao_runs', JSON.stringify(runs.slice(0,5)));
+  lsSet('chicletao_runs', JSON.stringify(runs.slice(0,5)));
 }
 function renderHistory() {
   const wrap = document.getElementById('run-history');
   if (!wrap) return;
-  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
+  let runs = lsJSON('chicletao_runs',[]); if(!Array.isArray(runs)) runs=[];
   if (!runs.length) { wrap.innerHTML='<p style="color:#666;font-size:12px">Nenhuma partida ainda</p>'; return; }
-  wrap.innerHTML = runs.map((r,i)=>
-    '<div class="run-row">'
-    +'<span class="run-num">#'+(i+1)+'</span>'
-    +'<span>Wave <b>'+r.wave+'</b></span>'
-    +'<span><b>'+r.score.toLocaleString('pt-BR')+'</b> pts</span>'
-    +'<span>'+r.kills+' kills</span>'
-    +'<span class="run-diff run-'+r.diff+'">'+r.diff+'</span>'
-    +'<span class="run-date">'+r.date+'</span>'
-    +'</div>'
-  ).join('');
+  wrap.innerHTML = runs.map((r,i)=>{
+    const diff=['easy','normal','hard'].includes(r.diff)?r.diff:'normal';
+    return '<div class="run-row">'
+      +'<span class="run-num">#'+(i+1)+'</span>'
+      +'<span>Wave <b>'+(Number(r.wave)||0)+'</b></span>'
+      +'<span><b>'+(Number(r.score)||0).toLocaleString('pt-BR')+'</b> pts</span>'
+      +'<span>'+(Number(r.kills)||0)+' kills</span>'
+      +'<span class="run-diff run-'+diff+'">'+diff+'</span>'
+      +'<span class="run-date">'+esc(r.date)+'</span>'
+      +'</div>';
+  }).join('');
 }
 
 // ═══════════════════════════════════════════
@@ -1198,8 +1279,7 @@ function renderHistory() {
 function showPostGame() {
   saveRun();
   const hs=getHS(), newHS=wave>hs; if(newHS) setHS(wave);
-  const hsScore=parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
-  if(score>hsScore) localStorage.setItem('chicletao_hs_score',score);
+  if(score>getHSScore()) lsSet('chicletao_hs_score',score);
 
   document.getElementById('pg-wave').textContent    = wave;
   document.getElementById('pg-score').textContent   = score.toLocaleString('pt-BR');
@@ -1216,226 +1296,17 @@ function showPostGame() {
   renderHistory();
   renderAchievements();
   document.getElementById('ov-postGame').style.display='flex';
-  document.getElementById('ov-go').style.display='none';
 }
 
 function setDifficulty(d) {
-  difficulty = d;
+  if (!['easy','normal','hard'].includes(d)) d='normal';
+  difficulty = d; lsSet('chicletao_diff', d);
   ['easy','normal','hard'].forEach(v=>{
     const b=document.getElementById('diff-'+v);
     if(b) b.classList.toggle('diff-active', v===d);
   });
 }
 
-requestAnimationFrame(loop);
-}
-
-
-// ═══════════════════════════════════════════
-//  DETECÇÃO DE ZOOM
-// ═══════════════════════════════════════════
-let zoomDismissed = false;
-let zoomPaused    = false;
-
-function getZoom() {
-  // Método mais confiável cross-browser
-  return Math.round(window.devicePixelRatio * 100 / (window.outerWidth / window.innerWidth || 1)) || Math.round(window.devicePixelRatio * 100);
-}
-
-function checkZoom() {
-  if (zoomDismissed) return;
-  // Usa window.devicePixelRatio comparado ao ratio "natural" da tela
-  // A forma mais simples e cross-browser: compara innerWidth com screen width
-  const zoom = Math.round((window.outerWidth / window.innerWidth) * 100);
-  const ov   = document.getElementById('ov-zoom');
-  const val  = document.getElementById('zoom-val');
-  if (!ov) return;
-
-  // Tolerância de ±5% para evitar falsos positivos por DPI
-  const isZoomed = zoom < 95 || zoom > 105;
-
-  if (isZoomed) {
-    if (val) val.textContent = zoom;
-    ov.style.display = 'flex';
-    if (!zoomPaused && state === 'battle' && !paused) {
-      paused = true;
-      zoomPaused = true;
-      const btn = document.getElementById('btn-pause');
-      const ovp = document.getElementById('ov-pause');
-      if (btn) btn.textContent = '▶ Resume';
-      // Não mostra overlay de pausa — o de zoom já está visível
-    }
-  } else {
-    ov.style.display = 'none';
-    if (zoomPaused) {
-      paused = false;
-      zoomPaused = false;
-      const btn = document.getElementById('btn-pause');
-      if (btn) btn.textContent = '⏸ Pausa';
-    }
-  }
-}
-
-function dismissZoom() {
-  zoomDismissed = true;
-  document.getElementById('ov-zoom').style.display = 'none';
-  if (zoomPaused) {
-    paused = false;
-    zoomPaused = false;
-    const btn = document.getElementById('btn-pause');
-    if (btn) btn.textContent = '⏸ Pausa';
-  }
-}
-
-// Checa no resize (zoom muda o innerWidth)
-window.addEventListener('resize', checkZoom);
-// Checa periodicamente (alguns browsers não disparam resize no zoom)
-setInterval(checkZoom, 800);
-// Checa na inicialização
-checkZoom();
-
-
-// ═══════════════════════════════════════════
-//  CONQUISTAS
-// ═══════════════════════════════════════════
-// ACHIEVEMENTS moved to top
-let unlockedAchievements = new Set(JSON.parse(localStorage.getItem('chicletao_ach')||'[]'));
-
-function checkAchievements() {
-  ACHIEVEMENTS.forEach(a => {
-    if (unlockedAchievements.has(a.id)) return;
-    if (a.check()) {
-      unlockedAchievements.add(a.id);
-      localStorage.setItem('chicletao_ach', JSON.stringify([...unlockedAchievements]));
-      showAchievementToast(a);
-    }
-  });
-}
-
-function showAchievementToast(a) {
-  const el = document.createElement('div');
-  el.className = 'ach-toast';
-  el.innerHTML = '<span class="ach-icon">'+a.icon+'</span>'
-    +'<div><div class="ach-title">🏅 Conquista desbloqueada!</div>'
-    +'<div class="ach-name">'+a.title+'</div>'
-    +'<div class="ach-desc">'+a.desc+'</div></div>';
-  document.body.appendChild(el);
-  setTimeout(()=>el.classList.add('show'), 50);
-  setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>el.remove(), 400); }, 3500);
-  sfxWin();
-}
-
-function renderAchievements() {
-  const wrap = document.getElementById('ach-list');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  ACHIEVEMENTS.forEach(a => {
-    const unlocked = unlockedAchievements.has(a.id);
-    const el = document.createElement('div');
-    el.className = 'ach-item'+(unlocked?'':' ach-locked');
-    el.innerHTML = '<span class="ach-icon-sm">'+a.icon+'</span>'
-      +'<div><div class="ach-item-title">'+a.title+'</div>'
-      +'<div class="ach-item-desc">'+a.desc+'</div></div>'
-      +(unlocked?'<span class="ach-check">✅</span>':'<span class="ach-check" style="opacity:.3">🔒</span>');
-    wrap.appendChild(el);
-  });
-}
-
-// ═══════════════════════════════════════════
-//  LOJA ENTRE WAVES
-// ═══════════════════════════════════════════
-// SHOP_ITEMS moved to top
-function showShop() {
-  const ov = document.getElementById('ov-shop');
-  const wrap = document.getElementById('shop-items');
-  if (!ov||!wrap) return;
-  wrap.innerHTML = '';
-  const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
-  SHOP_ITEMS.forEach(item => {
-    const canBuy = goma >= item.cost;
-    const el = document.createElement('div');
-    el.className = 'shop-item'+(canBuy?'':' shop-cant');
-    el.innerHTML = '<span class="shop-icon">'+item.icon+'</span>'
-      +'<div class="shop-info"><div class="shop-name">'+item.name+'</div>'
-      +'<div class="shop-desc">'+item.desc+'</div></div>'
-      +'<button class="shop-buy'+(canBuy?'':' shop-buy-off')+'" '+(canBuy?'':'disabled')+'>🍬'+item.cost+'</button>';
-    if (canBuy) {
-      el.querySelector('.shop-buy').addEventListener('click', ()=>{
-        goma -= item.cost; item.fn();
-        const sg=document.getElementById('shop-goma'); if(sg) sg.textContent=goma;
-        showShop(); // refresh
-      });
-    }
-    wrap.appendChild(el);
-  });
-  ov.style.display = 'flex';
-}
-
-function closeShop() {
-  document.getElementById('ov-shop').style.display = 'none';
-  state='upgrade'; showUpgrades();
-}
-
-// ═══════════════════════════════════════════
-//  HISTÓRICO DE RUNS
-// ═══════════════════════════════════════════
-function saveRun() {
-  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
-  runs.unshift({ wave, score, kills:totalKills, diff:difficulty, date:new Date().toLocaleDateString('pt-BR') });
-  localStorage.setItem('chicletao_runs', JSON.stringify(runs.slice(0,5)));
-}
-function renderHistory() {
-  const wrap = document.getElementById('run-history');
-  if (!wrap) return;
-  const runs = JSON.parse(localStorage.getItem('chicletao_runs')||'[]');
-  if (!runs.length) { wrap.innerHTML='<p style="color:#666;font-size:12px">Nenhuma partida ainda</p>'; return; }
-  wrap.innerHTML = runs.map((r,i)=>
-    '<div class="run-row">'
-    +'<span class="run-num">#'+(i+1)+'</span>'
-    +'<span>Wave <b>'+r.wave+'</b></span>'
-    +'<span><b>'+r.score.toLocaleString('pt-BR')+'</b> pts</span>'
-    +'<span>'+r.kills+' kills</span>'
-    +'<span class="run-diff run-'+r.diff+'">'+r.diff+'</span>'
-    +'<span class="run-date">'+r.date+'</span>'
-    +'</div>'
-  ).join('');
-}
-
-// ═══════════════════════════════════════════
-//  STATS PÓS-PARTIDA
-// ═══════════════════════════════════════════
-// killsByType moved to top
-
-function showPostGame() {
-  saveRun();
-  const hs=getHS(), newHS=wave>hs; if(newHS) setHS(wave);
-  const hsScore=parseInt(localStorage.getItem('chicletao_hs_score')||'0',10);
-  if(score>hsScore) localStorage.setItem('chicletao_hs_score',score);
-
-  document.getElementById('pg-wave').textContent    = wave;
-  document.getElementById('pg-score').textContent   = score.toLocaleString('pt-BR');
-  document.getElementById('pg-kills').textContent   = totalKills;
-  document.getElementById('pg-hs').textContent      = newHS ? '🏆 Novo recorde de waves!' : 'Recorde: Wave '+hs;
-  const pgd=document.getElementById('pg-diff'); if(pgd){pgd.textContent=difficulty; pgd.className='pg-val pg-diff pg-'+difficulty;}
-  // kills por tipo
-  const kl = document.getElementById('pg-kills-breakdown');
-  if (kl) kl.innerHTML = Object.entries(killsByType)
-    .filter(([,v])=>v>0)
-    .map(([k,v])=>'<span class="pg-ktype">'+({'normal':'💀','tank':'🛡️','fast':'💨','boss':'👹','healer':'💊','runner':'🏃','armored':'🪖'}[k]||'❓')+' '+k+': <b>'+v+'</b></span>')
-    .join('');
-
-  renderHistory();
-  renderAchievements();
-  document.getElementById('ov-postGame').style.display='flex';
-  document.getElementById('ov-go').style.display='none';
-}
-
-function setDifficulty(d) {
-  difficulty = d;
-  ['easy','normal','hard'].forEach(v=>{
-    const b=document.getElementById('diff-'+v);
-    if(b) b.classList.toggle('diff-active', v===d);
-  });
-}
-
+setDifficulty(lsGet('chicletao_diff','normal'));
+computeCellCenters();
 requestAnimationFrame(loop);

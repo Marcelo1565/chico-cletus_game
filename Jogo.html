@@ -50,13 +50,16 @@
 
 <!-- ARENA -->
 <div id="arena">
+<div id="stage">
   <button id="btn-mute" onclick="toggleMute()">🔊 Som</button>
   <div id="hs-badge">🏆 <span id="hs-val">0</span></div>
   <button id="btn-pause" disabled onclick="togglePause()">⏸ Pausa</button>
   <div id="auto-wave">⏳ Wave em <span id="aw-sec">4</span>s
     <div id="aw-bar"><div id="aw-fill"></div></div>
   </div>
-  <div id="notif"></div>
+  <div id="notif" role="status" aria-live="polite"></div>
+  <div id="tip"></div>
+  <div id="wave-preview"></div>
   <div id="wave-badge"></div>
   <div id="event-banner"></div>
   <div id="spd-bar">
@@ -91,6 +94,7 @@
     <div id="grid"></div>
   </div>
 </div>
+</div>
 
 <!-- MÃO -->
 <div id="hand"></div>
@@ -101,15 +105,6 @@
   <div id="ov-up-cards"></div>
 </div>
 
-<!-- OVERLAY GAME OVER -->
-<div class="overlay" id="ov-go">
-  <h1>💀 Derrota!</h1>
-  <p id="go-msg"></p>
-  <p id="go-stats" style="font-size:12px;color:#886677;margin-top:4px"></p>
-  <p class="hs-line" id="go-hs"></p>
-  <button class="bbig" onclick="location.reload()">🔄 Tentar novamente</button>
-</div>
-
 <!-- OVERLAY PAUSA -->
 <div id="ov-pause" style="position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;
   flex-direction:column;align-items:center;justify-content:center;z-index:28;gap:16px">
@@ -118,15 +113,12 @@
   <button class="bbig" onclick="togglePause()">▶ Continuar</button>
 </div>
 
-<!-- OVERLAY ZOOM -->
+<!-- OVERLAY ORIENTAÇÃO (celular em pé) -->
 <div id="ov-zoom">
-  <div class="zoom-icon">🔍</div>
-  <h2>Zoom do navegador detectado</h2>
-  <p>O jogo funciona melhor com zoom em <b>100%</b>.<br>
-     Zoom atual: <span id="zoom-val">?</span>%</p>
-  <p>Pressione <kbd>Ctrl + 0</kbd> para resetar o zoom<br>
-     ou <kbd>⌘ + 0</kbd> no Mac</p>
-  <button class="bbig" onclick="dismissZoom()">▶ Jogar assim mesmo</button>
+  <div class="zoom-icon">📱</div>
+  <h2>Gire o celular</h2>
+  <p>O jogo fica bem maior e mais fácil de jogar<br>com o aparelho na horizontal.</p>
+  <button class="bbig" onclick="dismissOrientation()">▶ Jogar assim mesmo</button>
 </div>
 
 <!-- TELA DE TÍTULO -->
@@ -142,8 +134,6 @@
   </div>
   <button class="bbig" id="btn-start" style="font-size:16px;padding:14px 36px;margin-top:4px">🍬 Jogar</button>
 </div>
-
-<script src="script.js"></script>
 
 <!-- OVERLAY LOJA -->
 <div id="ov-shop">
@@ -171,5 +161,6 @@
   <button class="bbig" onclick="location.reload()" style="margin-top:10px">🔄 Tentar novamente</button>
 </div>
 
+<script src="script.js"></script>
 </body>
 </html>
