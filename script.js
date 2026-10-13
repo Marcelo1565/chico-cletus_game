@@ -313,13 +313,13 @@ const DECK = [
   {id:'tanque',   name:'Blocão',        icon:'./assets/chicleteTanque.webp',  emoji:null,  desc:'Parede viva de chiclete',       cost:4, type:'unit',     hp:500, dmg:12, spd:60, color:'#ff44aa', rarity:'rare',    weight:7},
   {id:'atirador', name:'Franqueiro',    icon:'./assets/Franqueiro.webp',              emoji:'🎯',  desc:'Alto dano, vida baixa',         cost:3, type:'unit',     hp:52,  dmg:32, spd:75, color:'#cc8844', rarity:'rare',    weight:6},
   {id:'duplo',    name:'Par de Goma',   icon:null,                            emoji:'🍡',  desc:'Equilibrado e barato',          cost:2, type:'unit',     hp:60,  dmg:13, spd:44, color:'#ff66cc', rarity:'common',  weight:9},
-  {id:'lenda',    name:'Rei da Bala',   icon:null,                            emoji:'🍮',  desc:'Lendário. Ponto final.',        cost:4, type:'unit',     hp:250, dmg:42, spd:60, color:'#ffd700', rarity:'legend',  weight:2},
+  {id:'lenda',    name:'Rei da Bala',   icon:null,                            emoji:'🍮',  desc:'Lendário. Ponto final.',        cost:4, type:'unit',     hp:250, dmg:42, spd:60, color:'#ffd700', rarity:'legend',  weight:3},
   {id:'sticky',   name:'Goma Grudenta', icon:null,                            emoji:'🟤',  desc:'Gosma que lentifica inimigos',  cost:5, type:'unit',     hp:78,  dmg:16, spd:80, color:'#aa6633', rarity:'rare',    weight:5},
   {id:'healer',   name:'Chicle Cura',   icon:null,                            emoji:'💚',  desc:'Cura tropas aliadas próximas',  cost:3, type:'unit',     hp:55,  dmg:5,  spd:90, color:'#44dd88', rarity:'rare',    weight:4},
-  {id:'fab',      name:'Fábrica',       icon:null,                            emoji:'🏭',  desc:'Gera +goma por wave',           cost:3, type:'building',                          rarity:'rare',    weight:5},
+  {id:'fab',      name:'Fábrica',       icon:null,                            emoji:'🏭',  desc:'Gera +goma por wave',           cost:3, type:'building',                          rarity:'rare',    weight:3},
   {id:'fusao',    name:'Derretimento',  icon:null,                            emoji:'🔥',  desc:'Sacrifica 1 tropa → +3 cartas', cost:2, type:'sacrifice',                         rarity:'common',  weight:3},
-  {id:'cura',     name:'Xarope King',   icon:null,                            emoji:'🧪',  desc:'Cura o Rei em +30 HP',          cost:2, type:'heal',                              rarity:'rare',    weight:3},
-  {id:'gomada',   name:'Puxada de Goma',icon:null,                            emoji:'💧',  desc:'+6 goma agora',                 cost:1, type:'goma',                              rarity:'rare',    weight:1},
+  {id:'cura',     name:'Xarope King',   icon:null,                            emoji:'🧪',  desc:'Cura o Rei em 100% do HP',      cost:2, type:'heal',                              rarity:'rare',    weight:2},
+  {id:'gomada',   name:'Puxada de Goma',icon:null,                            emoji:'💧',  desc:'+6 goma agora',                 cost:1, type:'goma',                              rarity:'rare',    weight:2},
 ];
 
 function pickCard() {
@@ -702,7 +702,7 @@ function useInstantCard() {
   if (card.type==='heal') {
     if (rei.hp>=rei.maxHp) { notify('👑 O Rei já está com HP cheio!'); sfxError(); sel=null; handDirty=true; return; }
     goma-=card.cost;
-    const h=Math.min(30,rei.maxHp-rei.hp); rei.hp+=h;
+    const h=Math.min(99999,rei.maxHp-rei.hp); rei.hp+=h;
     spawnFloat(reiCenter().x,reiCenter().y-30,'+'+Math.round(h)+' HP','#ff88cc');
     notify('🧪 Rei curado! +'+Math.round(h)+' HP'); sfxUpgrade();
   } else if (card.type==='goma') {
